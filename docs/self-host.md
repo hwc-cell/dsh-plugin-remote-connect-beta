@@ -234,6 +234,17 @@ The plugin's own access password (the `?k=` in the link) cannot be changed with 
 
 The password never appears in `argv`, logs, telemetry or the UI after submission.
 
+### 4.8 A password that is already in use is refused
+
+A password is a credential, not a name, so the same value must not be shared by two identities — and
+reusing your own previous password means "nothing actually changed" while you believe it did. Before
+writing, the plugin checks the candidate against the current key **and** against the SHA-256
+fingerprints of every key that has been active (stored as 16-hex prefixes; the plaintext of old keys is
+never kept). A hit is refused with "this password is already in use, pick another" — it never says
+whose it is. The check happens only **after** the current password was verified (otherwise the endpoint
+would be an oracle for "is anyone using this password?") and it shares one lock with the write, so two
+concurrent changes cannot both pass.
+
 ## 5. The tunnel account
 
 ```bash

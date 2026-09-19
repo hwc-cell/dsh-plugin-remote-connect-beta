@@ -1887,5 +1887,51 @@ check(
 await keyHost.close()
 idleUpstream.close()
 
+// ── 查重：新口令不得与"任何用过的口令"相同（规范 §4.1/§4.3）──
+
+const inUseHost = await bootPluginWithKey('first-key-0123456789')
+const firstChange = await inUseHost.post('/access-key/rotate', {
+  current: 'first-key-0123456789',
+  password: 'second-key-abcdefghij',
+  confirm: 'second-key-abcdefghij',
+})
+check('查重：第一次换成新口令正常通过', firstChange.status === 200 && firstChange.payload.accessKey === 'second-key-abcdefghij')
+const reuse = await inUseHost.post('/access-key/rotate', {
+  current: 'second-key-abcdefghij',
+  password: 'first-key-0123456789',
+  confirm: 'first-key-0123456789',
+})
+check(
+  '查重：想换回"用过的旧口令" → 409 拒绝，且提示不透露是谁在用',
+  reuse.status === 409 && /占用|in use/.test(String(reuse.payload.error)) === true && reuse.payload.accessKey === undefined,
+  String(reuse.payload.error).slice(0, 46),
+)
+const stillSecond = await inUseHost.post('/access-key/verify', { password: 'second-key-abcdefghij' })
+check('查重失败后既有口令保持不变（没有写入）', stillSecond.status === 200 && stillSecond.payload.ok === true)
+const stateAfter = JSON.parse(fs.readFileSync(path.join(inUseHost.dataDir, 'remote-connect', 'access-key.json'), 'utf8'))
+check(
+  '查重历史只存指纹（sha256 前 16 位），不存明文口令',
+  Array.isArray(stateAfter.history) &&
+    stateAfter.history.length >= 1 &&
+    stateAfter.history.every((item) => /^[0-9a-f]{16}$/.test(item)) &&
+    JSON.stringify(stateAfter).includes('first-key-0123456789') === false,
+  'history=' + JSON.stringify(stateAfter.history),
+)
+await inUseHost.close()
+
+// ── 隧道掉线：上游不可达时给友好页 + X-DSH-Reason: tunnel-down ──
+const deadProxyPort = 9 // discard 端口，保证连不上
+const downProxy = createProxy({ port: 0, listenHost: '127.0.0.1', upstreamPort: deadProxyPort, accessKey: '' })
+const downInfo = await downProxy.start()
+const downPage = await rawRequest(HOST + String(downInfo.port) + '/', { headers: { 'accept-language': 'zh-CN,zh;q=0.9' } })
+check(
+  '隧道掉线：上游连不上时返回 503 + 友好中文页 + X-DSH-Reason: tunnel-down（不再丢裸 502）',
+  downPage.status === 503 &&
+    downPage.headers['x-dsh-reason'] === 'tunnel-down' &&
+    downPage.body.includes('连不上 Harness'),
+  'HTTP ' + String(downPage.status) + ' reason=' + String(downPage.headers['x-dsh-reason']),
+)
+await downProxy.stop()
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

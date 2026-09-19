@@ -9,6 +9,15 @@ untouched on purpose), or straight from the repository.
 
 ### Added
 
+- Password de-duplication on the Mac side, per the updated spec: a new access password is refused if it
+  matches the current one or any key that has been active before (only SHA-256 16-hex fingerprints are
+  kept, never old plaintext), with "already in use, pick another" and no hint of whose it is. The check
+  runs only after the current password was verified and shares a lock with the write, so concurrent
+  changes cannot both pass.
+- When the upstream cannot be reached (tunnel down / Harness not running) the entry now answers 503 with
+  a readable page and `X-DSH-Reason: tunnel-down` instead of passing a bare 502 through.
+
+
 - Diagnostics for the second gate, per the server side's confirmation document: failures now carry
   `X-DSH-Reason` (`no-key` / `bad-key` / `key-unusable` / `host-not-allowed`) while keeping HTTP 404,
   each reason gets its own page copy, and the plugin logs `reason= key_len= key_fp8=` (a hash prefix,
