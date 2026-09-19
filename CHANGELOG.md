@@ -12,6 +12,12 @@ All notable changes to this project are documented here. The format follows [Kee
 - `doctor` reports the tailscale funnel check when the configured tunnel mode is `tailscale`.
 - CI workflow (Node 20/22: gate → tests → pack-content check), `CONTRIBUTING.md`, Homebrew formula template and `docs/market-submission.md`.
 
+### Changed
+
+- `npm run gate` also rejects hardcoded private LAN addresses (`192.168.x.x` / `10.x.x.x` literals); `192.168.x.x`-style placeholders still pass.
+- Preview harness (`npm run preview`) can render the tailscale backend (`?mode=tailscale`) and take documentation screenshots (`?shot=1&zoom=0.72`); `docs/client-preview.png` was regenerated from it.
+- Repository initialized with an initial commit and the packaging/CI files in place, so publishing is `git remote add` + `npm publish` away.
+
 ### Fixed
 
 - `dsh-remote --help` was treated as an unknown command (`--help` must be the first argument to be parsed as a flag).
