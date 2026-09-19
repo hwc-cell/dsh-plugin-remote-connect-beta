@@ -34,6 +34,59 @@ It is **off by default**, and the trade-offs are spelled out in
 
 ---
 
+## Risks — read this before you expose anything
+
+**What you are putting on the network.** A Harness is not a website: it runs commands and reads and
+writes files as the user who started it. Anyone who gets past the gates below gets exactly that, on
+that machine.
+
+**The gates, and what each one is worth**
+
+| Entry | What protects it | What it costs you if it leaks |
+| --- | --- | --- |
+| LAN (`lan.port`, default 8787) | **nothing** — anyone on the same network can open it | command execution for every device on that Wi-Fi. On a campus, hotel or office network that means strangers: keep `lan.enabled: false` unless you trust the network |
+| Public entry (your server) | the edge password (server side) **and** the `?k=` access key (this machine) | the link **is** a key: a screenshot, a forwarded message or a shared QR code hands over the same access you have. Rotate it in the panel and every old link and session dies at once |
+| Tunnel key `~/.ssh/dsh_remote_tunnel` | server-side `restrict,remote-port-forwarding,permitlisten=127.0.0.1:<port>` | one forward on that port — no shell, no other ports, no local forwards |
+
+**The risk nobody expects: what else is on this machine.** If the machine you expose also holds SSH
+keys or saved credentials for your servers — a root key for a VPS is the common case — then access to
+the Harness is access to those servers. Before exposing: move admin/root keys off this machine, or at
+least give them a passphrase and keep them in an agent.
+
+**The sandbox belongs to DSH, not to this plugin.** A visitor inherits your Harness permission preset.
+If yours is `danger-full-access`, the visitor has what you have. Use `workspace-write` (or a narrower
+preset) for an exposed Harness; this plugin does not sandbox anything itself.
+
+**What is stored, and for how long.** The access key, its fingerprint history, the audit log and the
+cookie-signing secret live in `$DSH_HOME/remote-connect/` with mode 0600. The access key is **not** in
+the macOS Keychain (a known limitation). The browser session the key issues lasts 12 hours; rotating
+or resetting the key invalidates every issued cookie immediately.
+
+**Availability is something you can lose.** Rotating the key invalidates all links and sessions — that
+is the point, but tell the people holding links. The LAN address changes with the network. If the
+tunnel stops, the public entry answers 503 with `X-DSH-Reason: tunnel-down`. Hosts that rate-limit SSH
+connections can make reconnects time out silently; this plugin backs off exponentially for that reason.
+
+**Who should not use this.** Anyone who would be handing a shell to a stranger on a machine that holds
+other credentials. "Somebody else wants remote access" is not a reason to give them yours — it is a
+reason for them to install this on their own machine.
+
+### Before you expose it: six checks
+
+1. The exposed Harness does **not** run with `danger-full-access`.
+2. No root/admin SSH keys or saved server passwords sit on this machine (or they are passphrase-protected).
+3. The edge password was generated (`dsh-remote credential`), not invented, and is in a password manager.
+4. The `?k=` link goes only to people you would let sit down at this computer.
+5. The LAN entry is off unless you trust the current network.
+6. Right after enabling: open `https://<your-domain>/_dsh/health` and confirm `tunnel: up` and that
+   `key_fp8` matches the fingerprint in the panel.
+
+### Kill switch
+
+- Panel → **Stop**: the public listener and the tunnel stop immediately.
+- Or set `public.enabled: false` / `lan.enabled: false` in `cordis.patch.yml` and restart DSH.
+- Rotate the access key: every existing link and every issued session stops working at once.
+
 ## Four backends (pick one; same core)
 
 | Backend | Work required on the server | Who it suits | Reachability in mainland China |

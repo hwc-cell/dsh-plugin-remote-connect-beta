@@ -55,6 +55,13 @@ untouched on purpose), or straight from the repository.
 
 ### Documentation
 
+- Both READMEs now lead with a **Risks** section: what the LAN entry exposes (nothing protects it),
+  what a leaked `?k=` link means, what the tunnel key can and cannot do, the "what else is on this
+  machine" risk (root keys elsewhere on the same box), that the sandbox belongs to DSH rather than to
+  this plugin, what is stored where, which failures you can lose availability to, and a six-item
+  pre-flight checklist plus a kill switch.
+
+
 - `docs/self-host.md` + `docs/self-host.zh.md`: the long-form guide to the `selfhost` backend — link shape, scripted vs manual server setup, TLS with served-vs-on-disk fingerprint verification, the restricted tunnel account, DNS with multiple views, client configuration, verification commands and a troubleshooting table.
 - `package.json` now ships `docs/` (the guides and the preview image) so every README link resolves in the published tarball; CI checks those files are present in the pack.
 
