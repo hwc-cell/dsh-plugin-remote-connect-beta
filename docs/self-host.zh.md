@@ -211,7 +211,7 @@ sudo chmod 600 /home/dshtunnel/.ssh/authorized_keys
 那一行长这样（一行写完，`permitlisten` 决定转发只能落在回环）：
 
 ```
-restrict,port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
+restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
 ```
 
 生成的 `/etc/ssh/sshd_config.d/60-dsh-remote.conf` 里只有两行 —— `AllowTcpForwarding yes` 与
@@ -220,6 +220,13 @@ restrict,port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... 
 （否则空闲一段时间隧道会被对端断开）。**不要**开 `GatewayPorts yes`。
 
 ---
+
+### 5.5 如果你的服务器对 SSH 连接限流
+
+有些主机会限制**每个 IP 的新连接频率**（常见规则是每分钟 20 个、并发 8 个）。固定短间隔重试的隧道会
+直接撞上限流，而症状**不是一条报错**，而是 SSH 超时 —— 极难排查。插件的重连因此是**指数退避 + 抖动**
+（5s、10s、20s……最多 60s，±25%），并且只在隧道稳定两分钟后才清零计数。如果你的主机更严格，
+请调大 `backoffBaseMs` / `backoffMaxMs`，而不是加大重试频率。
 
 ## 6. DNS
 

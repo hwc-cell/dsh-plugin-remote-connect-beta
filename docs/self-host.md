@@ -217,7 +217,7 @@ sudo chmod 600 /home/dshtunnel/.ssh/authorized_keys
 The line looks like this (one line, `permitlisten` is what keeps the forward on loopback):
 
 ```
-restrict,port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
+restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
 ```
 
 The generated drop-in `/etc/ssh/sshd_config.d/60-dsh-remote.conf` contains exactly two lines —
@@ -231,6 +231,15 @@ values. The two requirements are only: forwarding allowed for this account, and 
 enough that the tunnel survives idle periods. Do **not** set `GatewayPorts yes`.
 
 ---
+
+### 5.5 If your provider rate-limits SSH connections
+
+Some hosts cap **new connections per IP** (a common firewall rule is 20 per minute, 8 concurrent).
+A tunnel that retries on a fixed short interval will hit that cap, and the symptom is not an error
+message — SSH simply times out, which is very hard to diagnose. The plugin therefore backs off
+**exponentially with jitter** (5 s, 10 s, 20 s … capped at 60 s, ±25 %), and only resets that
+counter after the tunnel has been stable for two minutes. If your provider is stricter, tune
+`backoffBaseMs` / `backoffMaxMs` in the tunnel options rather than retrying harder.
 
 ## 6. DNS
 

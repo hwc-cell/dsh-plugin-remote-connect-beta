@@ -1362,10 +1362,10 @@ check(
 )
 const credCommands = credential.setupCommands({ user: 'dsh', authFile: '/etc/nginx/.htpasswd-dsh', password: 'alpha-beta-123' })
 check(
-  'credential: 设置命令把口令经 stdin 传入（不出现在进程列表）',
-  credCommands.htpasswd.includes('htpasswd -i -c /etc/nginx/.htpasswd-dsh dsh') &&
+  'credential: 设置命令把口令经 stdin 传入（不出现在进程列表），且用 bcrypt',
+  credCommands.htpasswd.includes('htpasswd -i -B /etc/nginx/.htpasswd-dsh dsh') &&
     credCommands.htpasswd.includes('printf %s') &&
-    credCommands.htpasswd.includes('systemctl reload nginx'),
+    credCommands.htpasswd.includes('chmod 640'),
 )
 check(
   'credential: 给出 openssl 兜底与 401 验证命令',
@@ -1381,7 +1381,7 @@ check(
         payload.user === 'dsh' &&
         typeof payload.password === 'string' &&
         payload.password.length > 10 &&
-        payload.commands.htpasswd.includes('htpasswd -i -c')
+        payload.commands.htpasswd.includes('htpasswd -i -B')
       )
     })(),
   cliCred.stdout.slice(0, 60).replace(/\n/g, ' '),
@@ -1443,6 +1443,99 @@ check(
   listenHint.indexOf('已有隧道占着') < listenHint.indexOf('permitlisten'),
   listenHint.slice(0, 60),
 )
+
+// ──────────────────── 服务器侧限流 / 授权行 / 密钥门页面（对接文档提出） ────────────────────
+
+const tunnelTools2 = await import(pathToFileURL(path.join(root, 'lib/core/tunnel.js')).href)
+const seq = [1, 2, 3, 4, 5, 6, 7].map((n) => tunnelTools2.nextBackoffDelay(n, { random: () => 0.5 }))
+check(
+  'tunnel: 重连退避 5s 起、60s 封顶、单调不减（服务器 22022 有 20 次/60s 的限流）',
+  seq[0] === 5000 && seq[1] === 10000 && seq[2] === 20000 && seq[3] === 40000 && seq[4] === 60000 && seq[5] === 60000 &&
+    seq.every((value, index) => index === 0 || value >= seq[index - 1]),
+  seq.join(', '),
+)
+check(
+  'tunnel: 退避带 ±25% 抖动（避免所有客户端同时重连）',
+  (() => {
+    const low = tunnelTools2.nextBackoffDelay(1, { random: () => 0 })
+    const high = tunnelTools2.nextBackoffDelay(1, { random: () => 1 })
+    return low === 3750 && high === 6250
+  })(),
+  String(tunnelTools2.nextBackoffDelay(1, { random: () => 0 })) + '–' + String(tunnelTools2.nextBackoffDelay(1, { random: () => 1 })),
+)
+// 行为验证：连续崩溃时延迟要递增（回归"退出就清零 attempts"那个固定 2 秒猛重试的 bug）
+const flakyStates = []
+const flakyScript = path.join(root, 'test', '.flaky-tunnel.sh')
+fs.writeFileSync(flakyScript, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+const flakyTunnel = tunnelTools2.createTunnel({
+  mode: 'cloudflared',
+  localPort: 1,
+  cloudflaredPath: flakyScript,
+  // 取大于 1s 下限的值，才能观察到"退避在增长"（下限本身是刻意的保护）
+  backoffBaseMs: 1000,
+  backoffMaxMs: 4000,
+  backoffJitter: 0,
+  onState: (state) => {
+    if (state.phase === 'reconnecting') flakyStates.push(Number(state.params.delayMs))
+  },
+})
+flakyTunnel.start()
+await new Promise((resolve) => setTimeout(resolve, 4600))
+await flakyTunnel.stop()
+fs.rmSync(flakyScript, { force: true })
+check(
+  'tunnel: 连续失败时退避真的在增长（不再固定间隔重试）',
+  flakyStates.length >= 3 && flakyStates[flakyStates.length - 1] > flakyStates[0],
+  '延迟序列(ms)：' + flakyStates.join(', '),
+)
+
+const snippetTools2 = await import(pathToFileURL(path.join(root, 'lib/core/snippets.js')).href)
+const authLine = snippetTools2.authorizedKeysLine('ssh-ed25519 AAAA test', 8788)
+check(
+  'snippets: 授权行用 remote-port-forwarding（只放 -R，不放开 -L）',
+  authLine.includes('restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788"') && !authLine.includes(',port-forwarding,'),
+  authLine.slice(0, 60),
+)
+
+const cred = credential.setupCommands({ user: 'dsh', authFile: '/etc/nginx/.htpasswd-dsh', password: 'pw' })
+check(
+  'credential: 用 bcrypt（-B）且默认不带 -c（不覆盖已有用户）',
+  cred.htpasswd.includes('htpasswd -i -B /etc/nginx/.htpasswd-dsh dsh') &&
+    !cred.htpasswd.includes(' -c ') &&
+    cred.firstTime.includes('-c ') &&
+    cred.htpasswd.includes('chmod 640'),
+)
+check(
+  'credential: openssl 兜底会提示它只能做较弱的 $apr1$',
+  cred.openssl.includes('apr1') && cred.openssl.split('\n')[0].includes('弱'),
+)
+
+// 密钥门页面：带 ?k= 的人看到说明页；没有凭据的扫描器仍然只看到裸 404
+const gateProxy = createProxy({
+  port: 0,
+  listenHost: '127.0.0.1',
+  upstreamPort: upstreamA.stubPort,
+  accessKey: 'the-real-key-0123456789',
+})
+const gateInfo = await gateProxy.start()
+const friendly = await rawRequest(HOST + String(gateInfo.port) + '/?k=wrong-key-0000000000', {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
+check(
+  'gate: 带了错密钥的人看到中文说明页（而不是裸 404），且不回显他试过的密钥',
+  friendly.status === 404 &&
+    String(friendly.headers['content-type']).includes('text/html') &&
+    friendly.body.includes('访问密钥已经无效') &&
+    !friendly.body.includes('wrong-key-0000000000'),
+  'HTTP ' + String(friendly.status),
+)
+const bare = await rawRequest(HOST + String(gateInfo.port) + '/')
+check(
+  'gate: 没有任何凭据的请求仍然只得到裸 404（不暴露入口存在）',
+  bare.status === 404 && bare.body.trim() === 'not found',
+  bare.body.trim().slice(0, 20),
+)
+await gateProxy.stop()
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

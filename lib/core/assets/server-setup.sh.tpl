@@ -215,7 +215,7 @@ ensure_tunnel_user() {
     install -m 600 -o "$TUNNEL_USER" -g "$TUNNEL_USER" /dev/null "$home/.ssh/authorized_keys"
   fi
   say "   下一步：把本机公钥写入 $home/.ssh/authorized_keys，行首带限制："
-  say "     restrict,port-forwarding,permitlisten=\"127.0.0.1:${REMOTE_PORT}\" <你的公钥> dsh-mac-tunnel"
+  say "     restrict,remote-port-forwarding,permitlisten=\"127.0.0.1:${REMOTE_PORT}\" <你的公钥> dsh-mac-tunnel"
 }
 
 ensure_sshd_dropin() {

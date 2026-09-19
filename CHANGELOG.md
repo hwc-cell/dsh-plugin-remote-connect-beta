@@ -34,6 +34,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- **Tunnel reconnect no longer hammers the server.** The counter was reset on every exit, so the
+  backoff never grew past its first step (a fixed ~2 s retry loop, 30 connections/minute). Hosts
+  that rate-limit SSH port 22022 (a common firewall rule: 20 new connections per minute per IP)
+  answer that with silent timeouts. Reconnects now back off exponentially with jitter (5 s → 60 s,
+  ±25 %) and only reset after the tunnel has been stable for two minutes.
+- The generated `authorized_keys` line now uses `remote-port-forwarding` instead of
+  `port-forwarding`, so the tunnel account cannot open local forwards either.
+- `credential` now emits `htpasswd -i -B` (bcrypt) and no longer uses `-c`, which would wipe other
+  users in an existing htpasswd file; first-time creation is shown separately.
+- A request that arrives with a wrong or rotated `?k=` now gets a short explanation page instead of
+  a bare 404 (requests without any credential still get the bare 404, so the entry's existence is
+  not revealed to scanners).
+
 - `dsh-remote --help` was treated as an unknown command (`--help` must be the first argument to be parsed as a flag).
 - Panel no longer crashes when the first `/state` request fails (`data` is still `null`).
 - `public.domain` is now required only for the `ssh` tunnel mode; `cloudflared` and `tailscale` provide their own hostname.
