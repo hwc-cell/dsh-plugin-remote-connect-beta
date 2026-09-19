@@ -1721,5 +1721,52 @@ check(
 )
 await rotateProxy.stop()
 
+// ──────────────────── 账密设置规范（服务器侧第 3 份文档） ────────────────────
+
+const cliEdge = (args) => runCli(args, { DSH_REMOTE_LANG: 'en' })
+const autoEdge = cliEdge(['setup-server', '--domain', 'dsh.example.com'])
+check(
+  'cli: setup-server 默认 auto —— 生成口令并只打印一次（没有内置默认口令）',
+  autoEdge.status === 0 &&
+    /Edge password for user dsh/.test(autoEdge.stderr) &&
+    /printf %s "[a-z-]+-[0-9]{3}" \| sudo bash/.test(autoEdge.stderr),
+  (autoEdge.stderr.split('\n')[1] ?? '').trim(),
+)
+const promptEdge = cliEdge(['setup-server', '--domain', 'dsh.example.com', '--edge-password', 'prompt'])
+check(
+  'cli: --edge-password prompt 不生成、不打印口令（交给服务器侧交互输入）',
+  promptEdge.status === 0 && promptEdge.stderr.includes('will ask for the password interactively') &&
+    /Edge password for user/.test(promptEdge.stderr) === false,
+)
+const weakEdge = cliEdge(['setup-server', '--domain', 'dsh.example.com', '--edge-password', '123456'])
+check(
+  'cli: 显式弱口令被拒并给出理由',
+  weakEdge.status === 1 && weakEdge.stderr.includes('too weak'),
+  weakEdge.stderr.trim().split('\n')[0].slice(0, 60),
+)
+const namedEdge = cliEdge(['setup-server', '--domain', 'dsh.example.com', '--edge-user', 'alice'])
+check('cli: --edge-user 改用户名（默认 dsh，可改）', namedEdge.stderr.includes('for user alice'))
+
+const setupScriptText = setupTools.buildServerSetupScript({ domain: 'dsh.example.com', remotePort: 8788, tunnelUser: 'dshtunnel' })
+check(
+  'serversetup: 改用户名时会删掉旧条目（否则旧用户名仍能登录）',
+  setupScriptText.includes('htpasswd -D "$AUTH_FILE" "$PREV_USER"') &&
+    setupScriptText.includes('prev-user') &&
+    setupScriptText.includes('printf \'%s\\n\' "$AUTH_USER" > "$PREV_USER_FILE"'),
+)
+check(
+  'serversetup: 口令只经 stdin（-i），-c 只在文件不存在时用，且不用 -b',
+  setupScriptText.includes('--auth-password-stdin') &&
+    setupScriptText.includes('htpasswd -i -B') &&
+    setupScriptText.includes('htpasswd -i -B -c') &&
+    setupScriptText.includes(' -b ') === false,
+)
+const gateScript = fs.readFileSync(path.join(root, 'test', 'no-private-values.sh'), 'utf8')
+check(
+  'gate: 门禁覆盖"内置口令"与作者实例口令样例',
+  gateScript.includes(['mango', 'harbor'].join('-')) && gateScript.includes(['violet', 'tundra'].join('-')) &&
+    /edge\[_-\]\?password/.test(gateScript),
+)
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

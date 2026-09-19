@@ -32,6 +32,17 @@ All notable changes to this project are documented here. The format follows [Kee
 - Preview harness (`npm run preview`) can render the tailscale backend (`?mode=tailscale`) and take documentation screenshots (`?shot=1&zoom=0.72`); `docs/client-preview.png` was regenerated from it.
 - Repository initialized with an initial commit and the packaging/CI files in place, so publishing is `git remote add` + `npm publish` away.
 
+### Added
+
+- Credential defaults follow the server side's spec: the edge **user name** defaults to `dsh` and is
+  renameable (`--edge-user`, the installer deletes the previous entry so the old name stops working);
+  the edge **password** has no default — `--edge-password auto` generates one and prints it once,
+  `prompt` defers to the installer's interactive prompt, an explicit value is strength-checked. The
+  installer now uses `-i -B` (stdin + bcrypt) and only passes `-c` when the file does not exist yet.
+- The CI gate also rejects built-in default passwords and the author instance's sample password.
+- The panel warns that on the `tailscale` backend the access password is the only protection
+  (Funnel has no identity gate of its own).
+
 ### Fixed
 
 - **Tunnel reconnect no longer hammers the server.** The counter was reset on every exit, so the

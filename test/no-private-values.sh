@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # 192.168.x.x 这类占位写法不算命中（x 不是数字），真实网段地址才算
-PATTERNS='lycheeledger|154\.64\.255|45\.76\.79|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|/Users/[A-Za-z0-9._-]+/|ssh-ed25519 AAAA[A-Za-z0-9+/]{20,}'
+PATTERNS='lycheeledger|154\.64\.255|45\.76\.79|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|/Users/[A-Za-z0-9._-]+/|ssh-ed25519 AAAA[A-Za-z0-9+/]{20,}|mango-harbor|violet-tundra|edge[_-]?password[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{4,}'
 hits="$(grep -rInE "$PATTERNS" \
   --exclude-dir=node_modules --exclude-dir=.git \
   --exclude='*.png' --exclude='*.jpg' --exclude='no-private-values.sh' \

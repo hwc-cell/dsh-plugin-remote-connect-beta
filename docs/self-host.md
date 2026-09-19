@@ -204,6 +204,18 @@ Rotating this password does **not** affect the plugin's `?k=` key, and rotating 
 affect this one — two independent doors. Never put the password in a URL
 (`https://user:pass@host/`): browsers strip it and it leaks into history and logs.
 
+### 4.6 Naming and rotating the edge user
+
+`setup-server --edge-user <name>` changes the user name (default `dsh`); the installer records the
+previous name it wrote and deletes that entry first, so a renamed account cannot be logged into with
+the old name. `--edge-password auto` (default) generates a password and prints it once;
+`--edge-password prompt` lets the server-side installer ask interactively; `--edge-password <text>`
+takes your own (validated: at least 12 characters, no common weak values). The password always
+travelled over stdin — never in `argv`, `ps` output or shell history.
+
+After rotating, delete the old password from your browser/password manager before retrying: a browser
+that keeps replaying an old password can pile up 401s and trip your provider's rate limiting.
+
 ## 5. The tunnel account
 
 ```bash

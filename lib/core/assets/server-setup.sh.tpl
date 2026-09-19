@@ -165,16 +165,27 @@ NGINX
 
 ensure_auth_file() {
   step "边缘口令 → $AUTH_FILE"
-  if [ -f "$AUTH_FILE" ]; then
-    say "   已存在，保留现有口令（如需重置：sudo htpasswd $AUTH_FILE $AUTH_USER）"
-    return 0
+  # 记着我们上次给这个文件设的用户名：改名时必须删掉旧条目，
+  # 否则旧用户名仍然能登录（《账密设置规范》§4 幂等要求）
+  PREV_USER_FILE="$(dirname "$AUTH_FILE")/.$(basename "$AUTH_FILE").prev-user"
+  if [ -f "$PREV_USER_FILE" ]; then
+    PREV_USER="$(cat "$PREV_USER_FILE" 2>/dev/null || true)"
+    if [ -n "$PREV_USER" ] && [ "$PREV_USER" != "$AUTH_USER" ] && [ -f "$AUTH_FILE" ]; then
+      say "   用户名由 $PREV_USER 改为 $AUTH_USER → 先删除旧条目"
+      run htpasswd -D "$AUTH_FILE" "$PREV_USER" || true
+    fi
   fi
   # 非交互：口令从 stdin 传入（printf %s '<口令>' | sudo bash 本脚本 install --auth-password-stdin）
   if [ "$AUTH_PASSWORD_STDIN" = "1" ]; then
     if IFS= read -r AUTH_PASSWORD; then
       if [ -z "$AUTH_PASSWORD" ]; then say "   ✖ 从 stdin 读到的口令为空"; return 1; fi
       if have htpasswd; then
-        run sh -c "printf '%s' \"\$1\" | htpasswd -i -c \"$AUTH_FILE\" \"$AUTH_USER\"" _ "$AUTH_PASSWORD"
+        # -c 只在文件不存在时用（它会把文件里其它用户清空）
+        if [ -f "$AUTH_FILE" ]; then
+          run sh -c "printf '%s' \"\$1\" | htpasswd -i -B \"$AUTH_FILE\" \"$AUTH_USER\"" _ "$AUTH_PASSWORD"
+        else
+          run sh -c "printf '%s' \"\$1\" | htpasswd -i -B -c \"$AUTH_FILE\" \"$AUTH_USER\"" _ "$AUTH_PASSWORD"
+        fi
       else
         hash="$(printf '%s' "$AUTH_PASSWORD" | openssl passwd -apr1 -stdin)"
         printf '%s:%s\n' "$AUTH_USER" "$hash" > "$AUTH_FILE"
@@ -182,6 +193,8 @@ ensure_auth_file() {
       chmod 640 "$AUTH_FILE"
       if id www-data >/dev/null 2>&1; then chown root:www-data "$AUTH_FILE"; fi
       say "   已写入 $AUTH_FILE（口令来自 stdin，未写入脚本、未进命令历史）"
+      printf '%s\n' "$AUTH_USER" > "$PREV_USER_FILE"
+      chmod 600 "$PREV_USER_FILE" 2>/dev/null || true
       unset AUTH_PASSWORD
       return 0
     fi
@@ -197,6 +210,8 @@ ensure_auth_file() {
     return 0
   fi
   htpasswd -c "$AUTH_FILE" "$AUTH_USER"
+  printf '%s\n' "$AUTH_USER" > "$PREV_USER_FILE"
+  chmod 600 "$PREV_USER_FILE" 2>/dev/null || true
   chmod 640 "$AUTH_FILE"
   if id www-data >/dev/null 2>&1; then chown root:www-data "$AUTH_FILE"; fi
   say "   已写入（口令不会出现在本脚本或日志里）"

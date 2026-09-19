@@ -22,6 +22,7 @@ import { createTenancy } from '../lib/core/tenancy.js'
 import { defaultGateSecretPath, defaultRegistryPath, loadOrCreateGateSecret, pluginStateDir } from '../lib/core/paths.js'
 import { createRegistry, defaultTenantBaseDir, generateAccessKey, slugifyId } from '../lib/core/tenant.js'
 import { generatePassphrase, generateRandomPassword, setupCommands } from '../lib/core/credential.js'
+import { checkAccessKeyStrength } from '../lib/index.js'
 import { discoverHarnessBin, discoverRuntime } from '../lib/core/instance.js'
 import {
   NGINX_UPGRADE_MAP,
@@ -340,12 +341,16 @@ function commandSetupServer(flags) {
   if (currentLocale() !== 'zh') noticeZhOnly()
   const domains = [].concat(flags.domain ?? [])
   if (domains.length === 0) fail('setup-server 需要 --domain <域名>')
+  // 规范《账密设置规范》：用户名默认 dsh 且可改；口令没有默认值，
+  // 只能 auto（生成并显示一次）/ prompt（交给安装脚本交互输入）/ 显式给定（要过强度校验）
+  const edgeUser = typeof flags['edge-user'] === 'string' ? flags['edge-user'] : flags['auth-user']
+  const edgeMode = typeof flags['edge-password'] === 'string' ? flags['edge-password'] : 'auto'
   const render = (builder) =>
     builder({
       domain: domains[0],
       remotePort: flags['remote-port'] !== undefined ? Number(flags['remote-port']) : 8788,
       tunnelUser: typeof flags['ssh-user'] === 'string' ? flags['ssh-user'] : 'dshtunnel',
-      authUser: typeof flags['auth-user'] === 'string' ? flags['auth-user'] : 'dsh',
+      authUser: typeof edgeUser === 'string' ? edgeUser : 'dsh',
       authFile: typeof flags['auth-file'] === 'string' ? flags['auth-file'] : undefined,
       nginxConf: typeof flags['nginx-conf'] === 'string' ? flags['nginx-conf'] : undefined,
     })
@@ -357,15 +362,23 @@ function commandSetupServer(flags) {
   }
   // 边缘口令：默认由插件生成一次并打印（用户自己想的 90% 是弱口令），
   // 口令不写进脚本；用 `printf %s '<口令>' | bash <脚本> install --auth-password-stdin` 应用。
-  if (flags.uninstall !== true) {
-    const edge = generatePassphrase()
+  if (flags.uninstall !== true && edgeMode !== 'prompt') {
+    const explicit = edgeMode !== 'auto' ? edgeMode : ''
+    if (explicit !== '') {
+      const problems = checkAccessKeyStrength(explicit)
+      if (problems.length > 0) fail(t('host.error.keyWeak', { reasons: problems.join('；') }))
+    }
+    const edge = explicit !== '' ? { password: explicit, bits: '—' } : generatePassphrase()
     process.stderr.write(
-      t('cli.setup.edgePassword', { user: typeof flags['auth-user'] === 'string' ? flags['auth-user'] : 'dsh' }) +
+      t('cli.setup.edgePassword', { user: typeof edgeUser === 'string' ? edgeUser : 'dsh' }) +
         '\n  ' + edge.password + '\n' +
         t('cli.setup.edgeApply', { bits: String(edge.bits) }) + '\n' +
         '  printf %s ' + JSON.stringify(edge.password) + ' | sudo bash <脚本> install --auth-password-stdin\n' +
         t('cli.setup.edgeNote') + '\n\n',
     )
+  }
+  if (flags.uninstall !== true && edgeMode === 'prompt') {
+    process.stderr.write(t('cli.setup.edgePrompt') + '\n\n')
   }
   const out = typeof flags.out === 'string' ? flags.out : null
   if (out === null) {
