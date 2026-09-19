@@ -216,6 +216,24 @@ travelled over stdin — never in `argv`, `ps` output or shell history.
 After rotating, delete the old password from your browser/password manager before retrying: a browser
 that keeps replaying an old password can pile up 401s and trip your provider's rate limiting.
 
+### 4.7 Changing the access password requires the current one
+
+The plugin's own access password (the `?k=` in the link) cannot be changed with one click:
+
+1. The panel asks for **current password + new password + confirmation**, checks them locally
+   (at least 12 characters, both new entries equal, new differs from current), then posts the current
+   password to `POST /access-key/verify`.
+2. Only if that verification passes does it call `POST /access-key/rotate`, which writes the new value,
+   bumps the key epoch (every issued cookie stops matching) and invalidates every old link and QR code.
+   A failed verification writes nothing, so a wrong "current password" can never leave you locked out.
+3. Five consecutive failures put the entry into a five-minute cooldown, and each failure is written to
+   `$DSH_HOME/remote-connect/audit.log` (time and event only — never the password).
+4. **Reset** is a separate, deliberately degraded path for "I forgot it": no current password is
+   required, but it must be confirmed explicitly (the panel says so), it invalidates old links and
+   sessions, and it leaves an audit line.
+
+The password never appears in `argv`, logs, telemetry or the UI after submission.
+
 ## 5. The tunnel account
 
 ```bash

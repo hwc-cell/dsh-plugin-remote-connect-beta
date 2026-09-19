@@ -12,6 +12,7 @@
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -357,6 +358,7 @@ const canned = {
     error: null,
   },
   [API + '/access-key/rotate']: { ok: true, accessKey: 'brand-new-key-0123456789', entry: 'https://dsh.example.com/?k=brand-new-key-0123456789', epoch: 2 },
+  [API + '/access-key/verify']: { ok: true },
   [API + '/tenants/add']: {
     ok: true,
     tenant: { id: 'carol', name: 'Carol', accessKey: 'key-carol-0123456789', port: 58583, phase: 'starting', running: false },
@@ -485,7 +487,7 @@ clientExports.internals.setState({ checkResults: null })
 
 // 访问口令面板：显示 / 生成新的 / 自定义
 check(
-  'client: 面板有「访问口令」一行（显示 + 生成新的 + 自定义输入）',
+  'client: 面板有「访问口令」一行（显示 + 修改〔当前/新/确认〕+ 重置）',
   (() => {
     clientExports.internals.setState({
       data: {
@@ -504,25 +506,38 @@ check(
     return (
       html.includes('«key.label»') &&
       html.includes('«key.reveal»') &&
-      html.includes('«key.rotate»') &&
-      html.includes('«key.setCustom»') &&
-      html.includes('«key.customPlaceholder»') &&
+      html.includes('«key.change»') &&
+      html.includes('«key.reset»') &&
+      html.includes('«key.current»') &&
+      html.includes('«key.new»') &&
+      html.includes('«key.confirm»') &&
       html.includes('de••••••89') ||
       (console.log('   面板缺失：', ['key.label','key.reveal','key.rotate','key.setCustom','key.customPlaceholder','de••••••89'].filter((k) => !html.includes(k === 'de••••••89' ? k : '«' + k + '»')).join(', ')), false)
     )
   })(),
 )
-await clientExports.internals.setCustomKey()
+const rotateCallsBefore = calls.filter((item) => item.pathname === API + '/access-key/rotate').length
+await clientExports.internals.changeKey()
 check(
-  'client: 自定义口令走 POST /access-key/rotate（空输入不发请求）',
-  calls.some((item) => item.pathname === API + '/access-key/rotate' && item.method === 'POST') === false,
+  'client: 表单没填全时不发任何请求（本地先拦）',
+  calls.filter((item) => item.pathname === API + '/access-key/rotate').length === rotateCallsBefore,
 )
-clientExports.internals.setState({ keyDraft: 'ginger-grove-ember-amber-apple-arrow-923' })
-await clientExports.internals.setCustomKey()
+clientExports.internals.setState({
+  keyCurrent: 'old-password-0123456789',
+  keyNext: 'new-password-0123456789',
+  keyConfirm: 'new-password-0123456789',
+})
+await clientExports.internals.changeKey()
 check(
-  'client: 填了口令后发出轮换请求并清空输入框',
-  calls.some((item) => item.pathname === API + '/access-key/rotate' && item.method === 'POST') &&
-    clientExports.internals.store.keyDraft === '',
+  'client: 修改先 POST /access-key/verify 校验旧口令，再 POST /access-key/rotate',
+  calls.some((item) => item.pathname === API + '/access-key/verify' && item.method === 'POST') &&
+    calls.filter((item) => item.pathname === API + '/access-key/rotate').length > rotateCallsBefore &&
+    clientExports.internals.store.keyCurrent === '',
+)
+await clientExports.internals.resetKey()
+check(
+  'client: 重置走 /access-key/rotate（reset + acknowledge，且不需要旧口令）',
+  calls.filter((item) => item.pathname === API + '/access-key/rotate').length > rotateCallsBefore + 1,
 )
 
 // ── 多租户面板：租户卡片、动作与二维码 ──
@@ -1177,13 +1192,14 @@ const instances = {
 function rawRequest(url, options = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url)
+    const body = options.body === undefined ? null : String(options.body)
     const req = http.request(
       {
         host: parsed.hostname,
         port: parsed.port,
         path: parsed.pathname + parsed.search,
         method: options.method ?? 'GET',
-        headers: options.headers ?? {},
+        headers: body === null ? options.headers ?? {} : { ...(options.headers ?? {}), 'content-length': Buffer.byteLength(body) },
       },
       (res) => {
         const chunks = []
@@ -1194,7 +1210,7 @@ function rawRequest(url, options = {}) {
       },
     )
     req.on('error', reject)
-    req.end()
+    req.end(body === null ? undefined : body)
   })
 }
 
@@ -1767,6 +1783,81 @@ check(
   gateScript.includes(['mango', 'harbor'].join('-')) && gateScript.includes(['violet', 'tundra'].join('-')) &&
     /edge\[_-\]\?password/.test(gateScript),
 )
+
+// ──────────────────── 改口令前必须验证旧账密（服务器侧第 4 份规范） ────────────────────
+
+const idleUpstream = http.createServer((req, res) => { res.writeHead(200); res.end('ok') })
+const idlePort = await listen(idleUpstream)
+
+/** 造一个"只有宿主窗口能改"的插件实例：用真实 apply()，带上隔离的 DSH_HOME。 */
+async function bootPluginWithKey(accessKey) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-key-'))
+  const routes2 = []
+  const fakeCtx2 = {
+    logger: { info: () => {}, warn: () => {} },
+    get: () => undefined,
+    webServer: { port: idlePort, register: (route) => { routes2.push(route); return () => {} } },
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+  }
+  process.env.DSH_HOME = dataDir
+  const hostModule2 = await import(pathToFileURL(path.join(root, 'lib/index.js')).href + '?t=' + String(Date.now()))
+  hostModule2.apply(fakeCtx2, { public: { accessKey }, lan: { enabled: false } })
+  const route = routes2.find((item) => item.path === API)
+  const server2 = http.createServer((req, res) => route.handler(req, res))
+  const port2 = await listen(server2)
+  const post = (path2, body) =>
+    rawRequest('http://127.0.0.1:' + String(port2) + API + path2, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => ({ status: r.status, payload: JSON.parse(r.body || '{}') }))
+  return { dataDir, server: server2, post, close: () => server2.close() }
+}
+
+const keyHost = await bootPluginWithKey('current-key-0123456789')
+const wrongCurrent = await keyHost.post('/access-key/rotate', { current: 'nope-nope-nope-9999', password: 'brand-new-key-111111', confirm: 'brand-new-key-111111' })
+check(
+  '改口令：当前口令错误 → 401 且带剩余次数，不写入任何东西',
+  wrongCurrent.status === 401 && /attempts left|还可尝试/.test(String(wrongCurrent.payload.error)) && wrongCurrent.payload.ok === false,
+  String(wrongCurrent.payload.error),
+)
+const stillOld = await keyHost.post('/access-key/verify', { password: 'current-key-0123456789' })
+check('改口令：验证失败后旧口令仍然有效（证明没写进去）', stillOld.status === 200 && stillOld.payload.ok === true)
+const mismatch = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'brand-new-key-111111', confirm: 'different-key-222222' })
+check('改口令：两次新口令不一致 → 400', mismatch.status === 400 && mismatch.payload.ok === false, String(mismatch.payload.error))
+const sameAsOld = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'current-key-0123456789', confirm: 'current-key-0123456789' })
+check('改口令：新口令与当前相同 → 400 拒绝', sameAsOld.status === 400 && sameAsOld.payload.ok === false, String(sameAsOld.payload.error))
+const good = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'brand-new-key-111111', confirm: 'brand-new-key-111111' })
+check('改口令：当前口令正确 → 写入成功并回显新口令', good.status === 200 && good.payload.accessKey === 'brand-new-key-111111')
+const oldGone = await keyHost.post('/access-key/verify', { password: 'current-key-0123456789' })
+check('改口令：改完旧口令立即失效', oldGone.status === 401)
+const bareReset = await keyHost.post('/access-key/rotate', { reset: true })
+check('重置：没有显式确认 → 400（不能变成无验证的后门）', bareReset.status === 400 && bareReset.payload.ok === false, String(bareReset.payload.error))
+const ackReset = await keyHost.post('/access-key/rotate', { reset: true, acknowledge: true })
+check('重置：显式确认后可用，且不需要旧口令', ackReset.status === 200 && typeof ackReset.payload.accessKey === 'string')
+// 5 次失败 → 冷却
+const burst = []
+for (let i = 0; i < 5; i += 1) burst.push(await keyHost.post('/access-key/verify', { password: 'wrong-' + String(i) + '-password' }))
+const blocked = await keyHost.post('/access-key/verify', { password: 'anything-at-all' })
+const blockedLike = burst.filter((item) => item.status === 429).concat(blocked.status === 429 ? [blocked] : [])
+check(
+  '防爆破：连续失败进入冷却（429）并给出等待时间',
+  burst.filter((item) => item.status === 401).length >= 3 &&
+    blockedLike.length >= 1 &&
+    blockedLike[0].payload.blocked === true &&
+    /\d/.test(String(blockedLike[0].payload.error)) &&
+    blockedLike[0].payload.retryAfterMs > 0,
+  'HTTP ' + String(blocked.status) + ' ' + String(blocked.payload.error).slice(0, 48),
+)
+const auditText = fs.readFileSync(path.join(keyHost.dataDir, 'remote-connect', 'audit.log'), 'utf8')
+check(
+  '审计：记录失败与重置，但绝不含任何口令',
+  auditText.includes('verify failed') && auditText.includes('RESET') &&
+    !/wrong-\d-password/.test(auditText) && !auditText.includes('brand-new-key') && !auditText.includes('current-key'),
+  auditText.trim().split('\n').slice(-1)[0],
+)
+await keyHost.close()
+idleUpstream.close()
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

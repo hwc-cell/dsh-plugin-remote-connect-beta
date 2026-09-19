@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Changing the access password now requires the current one (re-authentication), per the server side's
+  spec: the panel asks for current + new + confirmation, verifies the current value through
+  `POST /access-key/verify`, and only then writes. A failed verification writes nothing, five
+  consecutive failures trigger a five-minute cooldown, and every failure or reset appends a line to
+  `audit.log` that never contains a password. **Reset** (forgotten password) is a separate, explicitly
+  confirmed path that invalidates old links and sessions. The one-click "generate new" action is gone.
+
+
 - **`tailscale` tunnel mode** (`--tunnel tailscale` / `public.tunnel: tailscale`): publishes the loopback entry port with `tailscale funnel --bg`, reads the node address from `tailscale status --json`, probes the funnel periodically, and removes only its own mapping on stop. Failure paths (client missing, logged out, Funnel not enabled) surface a translated hint instead of retrying forever.
 - **Host-side message catalog** (`lib/core/messages.js`, one key set per language) so preflight results, tunnel state and panel API errors render in the language the panel asks for. The panel now sends `?locale=` with every API call; unknown locales fall back to English.
 - **CLI language support**: `--lang <en|zh>`, plus `DSH_REMOTE_LANG` / `LC_ALL` / `LANG` detection (English by default). `--help`, check results, the serve banner and the common errors are bilingual. `doctor`, `setup-server` and `keygen` still print their detailed report in Chinese and now say so in one line under an English locale.
