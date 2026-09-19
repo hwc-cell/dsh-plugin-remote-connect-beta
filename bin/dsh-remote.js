@@ -370,7 +370,7 @@ async function commandDoctor(flags) {
   })
   for (const item of preflight) results.push(item)
 
-  // 4) 证书线上生效性（Mac 侧只能看到"线上发的那张"）
+  // 4) 证书线上生效性（本机只能看到"线上发的那张"）
   const served = await servedCertificate(domain).catch(() => null)
   if (served !== null) {
     const days = Math.floor((served.expiresAt - Date.now()) / 86400000)
@@ -410,11 +410,12 @@ async function commandDoctor(flags) {
   }
 
   // 5) 服务器侧需要人跑的检查（Mac 读不到对端日志）
-  process.stdout.write('\n以下两项只能在服务器上跑（Mac 侧无法读取对端 /etc 与日志）：\n')
+  process.stdout.write('\n以下检查只能在服务器上跑（本机读不到对端的 /etc 与日志）：\n')
   process.stdout.write('  证书生效性：echo | openssl s_client -connect 127.0.0.1:443 -servername ' + domain + ' 2>/dev/null | openssl x509 -noout -enddate \\\n')
   process.stdout.write('              openssl x509 -in /etc/letsencrypt/live/<lineage>/fullchain.pem -noout -enddate   # 两者必须一致\n')
   process.stdout.write('  deploy 钩子：ls -l /etc/letsencrypt/renewal-hooks/deploy/   # 空 = 续签后不会 reload，线上会继续发旧证书\n')
   process.stdout.write('  日志泄漏：  grep -c "k=" /var/log/nginx/dsh-remote.access.log   # 期望 0\n')
+  process.stdout.write('  本机泄漏：  dsh-remote doctor --key <你的密钥>   # 检查本机候选日志里有没有 ?k= 的值\n')
 
   // 6) 本地侧：访问密钥不得出现在本机日志里
   if (typeof flags.key === 'string' && flags.key !== '') {

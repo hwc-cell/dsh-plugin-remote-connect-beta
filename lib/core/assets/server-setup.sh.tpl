@@ -193,7 +193,7 @@ ensure_tunnel_user() {
   if [ "$DRY_RUN" != "1" ] && [ ! -f "$home/.ssh/authorized_keys" ]; then
     install -m 600 -o "$TUNNEL_USER" -g "$TUNNEL_USER" /dev/null "$home/.ssh/authorized_keys"
   fi
-  say "   下一步：把 Mac 侧公钥写入 $home/.ssh/authorized_keys，行首带限制："
+  say "   下一步：把本机公钥写入 $home/.ssh/authorized_keys，行首带限制："
   say "     restrict,port-forwarding,permitlisten=\"127.0.0.1:${REMOTE_PORT}\" <你的公钥> dsh-mac-tunnel"
 }
 
@@ -262,7 +262,7 @@ verify_live_cert() {
       [ "$served" = "$onfile" ] || say "   ⚠ 两者不一致 → 说明 nginx 还在内存里用旧证书，执行：systemctl reload nginx"
       fingerprint="$(openssl x509 -in "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f' || true)"
       if [ -n "$fingerprint" ]; then
-        say "   把这一行交给 Mac 侧，从外部核对线上发的就是这张证书："
+        say "   把这一行交给本机侧，从外部核对线上发的就是这张证书："
         say "     --expect-cert-sha256 ${fingerprint}"
       fi
     fi
@@ -279,7 +279,7 @@ install() {
   ensure_cert
   verify_live_cert
   step "完成"
-  say "下一步：在 Mac 上跑"
+  say "下一步：在本机（跑 Harness 的那台）上跑"
   say "  dsh-remote doctor --domain $DOMAIN --user $AUTH_USER --ssh-user $TUNNEL_USER --ssh-host $DOMAIN --remote-port $REMOTE_PORT"
 }
 
