@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs'
 import http from 'node:http'
+import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -855,6 +856,243 @@ check(
   notShipped.length === 0,
   notShipped.length === 0 ? readmeLinks.join(', ') : '缺：' + notShipped.join(', '),
 )
+
+// ──────────────────── 多租户：租户模型与注册表 ────────────────────
+
+const tenantTools = await import(pathToFileURL(path.join(root, 'lib/core/tenant.js')).href)
+const tenantDir = path.join(root, 'test', '.tenants-fixture')
+fs.rmSync(tenantDir, { recursive: true, force: true })
+const registryFile = path.join(tenantDir, 'tenants.json')
+const registryLog = []
+const registry = tenantTools.createRegistry({
+  file: registryFile,
+  baseDir: path.join(tenantDir, 'homes'),
+  log: (line) => registryLog.push(line),
+})
+check('tenant: 初始为空且文件可以不存在', registry.load().loaded === 0 && registry.list().length === 0)
+check(
+  'tenant: id 规则（小写/数字/连字符，2–32 位）',
+  tenantTools.TENANT_ID_PATTERN.test('alice') &&
+    tenantTools.TENANT_ID_PATTERN.test('team-2') &&
+    tenantTools.TENANT_ID_PATTERN.test('Alice') === false &&
+    tenantTools.TENANT_ID_PATTERN.test('a') === false &&
+    tenantTools.TENANT_ID_PATTERN.test('-x') === false &&
+    tenantTools.TENANT_ID_PATTERN.test('a'.repeat(33)) === false,
+)
+check(
+  'tenant: 中文显示名会收敛成合法 id（目录名不能是中文）',
+  tenantTools.TENANT_ID_PATTERN.test(tenantTools.slugifyId('张三')) &&
+    tenantTools.slugifyId('张三') !== tenantTools.slugifyId('李四') &&
+    tenantTools.slugifyId('Alice Chen') === 'alice-chen',
+  tenantTools.slugifyId('张三'),
+)
+const keyA = tenantTools.generateAccessKey()
+const keyB = tenantTools.generateAccessKey()
+check('tenant: 生成的访问密钥满足 16–128 位 URL 安全规则', tenantTools.ACCESS_KEY_PATTERN.test(keyA) && keyA !== keyB, String(keyA.length) + ' 字符')
+check(
+  'tenant: 非法定义会被逐条说清（id / 密钥 / 端口 / profile）',
+  (() => {
+    const { problems } = tenantTools.normalizeTenant({ id: 'A B', accessKey: 'short', port: 99999 })
+    const text = problems.join('；')
+    return (
+      problems.length === 4 &&
+      text.includes('id 必须') &&
+      text.includes('accessKey') &&
+      text.includes('port 必须') &&
+      text.includes('profile')
+    )
+  })(),
+  tenantTools.normalizeTenant({ id: 'A B', accessKey: 'short', port: 99999 }).problems.length + ' 条',
+)
+const addedA = registry.add({ id: 'alice', name: 'Alice', accessKey: keyA })
+const addedB = registry.add({ id: 'bob', accessKey: keyB, port: 8899 })
+check(
+  'tenant: 新增后 home/profile 有默认值（home 落在 baseDir 下，profile 与 id 同名）',
+  addedA.home === path.join(tenantDir, 'homes', 'alice') && addedA.profile === 'alice' && addedA.autostart === true,
+  addedA.home,
+)
+check(
+  'tenant: 重复 id 与重复密钥都会被拒（否则两个租户会串门）',
+  (() => {
+    const dupeId = (() => { try { registry.add({ id: 'alice', accessKey: tenantTools.generateAccessKey() }); return false } catch { return true } })()
+    const dupeKey = (() => { try { registry.add({ id: 'carol', accessKey: keyA }); return false } catch { return true } })()
+    return dupeId && dupeKey
+  })(),
+)
+check('tenant: 按密钥查租户（时序安全比较，长度不同直接不匹配）', registry.findByKey(keyB)?.id === 'bob' && registry.findByKey('x'.repeat(keyA.length)) === null)
+check('tenant: 落盘后重新加载能读回来', (() => {
+  const fresh = tenantTools.createRegistry({ file: registryFile, baseDir: path.join(tenantDir, 'homes') })
+  return fresh.load().loaded === 2 && fresh.get('bob')?.accessKey === keyB
+})())
+check(
+  'tenant: 注册表坏数据不会让插件起不来（逐条忽略并记日志）',
+  (() => {
+    fs.writeFileSync(registryFile, JSON.stringify({ version: 1, tenants: [{ id: 'ok-1', accessKey: keyA }, { id: 'BAD ID', accessKey: keyB }] }))
+    const fresh = tenantTools.createRegistry({ file: registryFile, baseDir: path.join(tenantDir, 'homes'), log: (line) => registryLog.push(line) })
+    const result = fresh.load()
+    return result.loaded === 1 && result.dropped.length === 1 && registryLog.some((line) => line.includes('忽略'))
+  })(),
+)
+check('tenant: 轮换密钥后旧密钥立刻失效', (() => {
+  const before = registry.get('alice').accessKey
+  const after = registry.rotateKey('alice').accessKey
+  return after !== before && registry.findByKey(before) === null && registry.findByKey(after)?.id === 'alice'
+})())
+check('tenant: 删除后查不到，重复删除返回 null', registry.remove('bob')?.id === 'bob' && registry.remove('bob') === null && registry.get('bob') === null)
+
+// ──────────────────── 多租户：实例启动参数与就绪解析 ────────────────────
+
+const instanceTools = await import(pathToFileURL(path.join(root, 'lib/core/instance.js')).href)
+check(
+  'instance: 首次启动带 --from-default-profile web，之后不带',
+  instanceTools.buildInstanceArgv({ bin: '/x/bin.js', profile: 'alice', port: 0, initialize: true }).join(' ') ===
+    '--expose-internals /x/bin.js --profile alice --from-default-profile web --no-open --host 127.0.0.1 --port 0' &&
+    instanceTools.buildInstanceArgv({ bin: '/x/bin.js', profile: 'alice', port: 8899, initialize: false }).join(' ') ===
+      '--expose-internals /x/bin.js --profile alice --no-open --host 127.0.0.1 --port 8899',
+)
+check(
+  'instance: 真 node 不塞 --expose-internals（只有 Electron Helper 需要）',
+  instanceTools.buildInstanceArgv({ bin: '/x/bin.js', profile: 'a', port: 1, initialize: false, electron: false })[0] === '/x/bin.js',
+)
+check(
+  'instance: 能解析子进程 stdio 里的就绪行（端口与令牌都取得到）',
+  (() => {
+    const ready = instanceTools.parseReadyLine('dsh web: http://127.0.0.1:8791/?token=AbC-123_xyz\n')
+    return ready !== null && ready.port === 8791 && ready.token === 'AbC-123_xyz'
+  })(),
+)
+check('instance: 不是就绪行时返回 null（不会误把普通日志当令牌）', instanceTools.parseReadyLine('loading plugins…') === null)
+check(
+  'instance: runtime 优先真 node，而不是桌面版的 Electron shim',
+  (() => {
+    const found = instanceTools.discoverRuntime({ env: { HOME: '/tmp/nope' } })
+    return found.node === '/opt/homebrew/bin/node' || /^\/usr(\/local)?\/bin\/node$/.test(found.node)
+  })(),
+  instanceTools.discoverRuntime({ env: { HOME: '/tmp/nope' } }).node,
+)
+check(
+  'instance: 找不到 harness 入口时返回 null（让面板能说人话，而不是 ENOENT）',
+  instanceTools.discoverHarnessBin({ configured: '/definitely/not/here.js', appPath: '/definitely/not/here' }) === null,
+)
+
+// ──────────────────── 多租户：网关按凭据路由 ────────────────────
+
+const { createProxy } = proxyTools
+/** 起一个假上游：把收到的 Host 与 token 记下来，便于断言"请求去了谁家"。 */
+async function startStubUpstream(name) {
+  const seen = []
+  const stub = http.createServer((req, res) => {
+    seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, name })
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<!doctype html><title>' + name + '</title><body>' + name + '</body>')
+  })
+  const stubPort = await listen(stub)
+  return { stub, stubPort, seen }
+}
+const upstreamA = await startStubUpstream('tenant-a')
+const upstreamB = await startStubUpstream('tenant-b')
+const instances = {
+  alice: { id: 'alice', upstreamPort: () => upstreamA.stubPort, token: () => 'tok-alice' },
+  bob: { id: 'bob', upstreamPort: () => upstreamB.stubPort, token: () => 'tok-bob' },
+}
+/** client 半的测试替换了 globalThis.fetch，网关这部分必须自己发真请求。 */
+function rawRequest(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url)
+    const req = http.request(
+      {
+        host: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname + parsed.search,
+        method: options.method ?? 'GET',
+        headers: options.headers ?? {},
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }),
+        )
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+const routedProxy = createProxy({
+  port: 0,
+  listenHost: '127.0.0.1',
+  gateSecret: 'gate-secret-for-tests',
+  tenants: {
+    findById: (id) => instances[id] ?? null,
+    findByKey: (key) => (key === 'key-alice-0123456789' ? instances.alice : key === 'key-bob-0123456789' ? instances.bob : null),
+  },
+})
+const routedInfo = await routedProxy.start()
+const routedBase = HOST + String(routedInfo.port)
+const jarA = await rawRequest(routedBase + '/?k=key-alice-0123456789')
+const cookieA = String([].concat(jarA.headers['set-cookie'] ?? [])[0] ?? '')
+check(
+  'gateway: 租户密钥换到的 Cookie 里带租户 id（同一域名下靠它区分租户）',
+  jarA.status === 303 && cookieA.includes('gate=') && cookieA.includes('.'),
+  cookieA.split(';')[0].slice(0, 60),
+)
+const pageA = await rawRequest(routedBase + '/', { headers: { cookie: cookieA.split(';')[0] } })
+const bodyA = pageA.body
+check(
+  'gateway: A 的 Cookie 只发往 A 的上游（不是 B）',
+  pageA.status === 200 && bodyA.includes('tenant-a') && upstreamA.seen.some((item) => item.url.includes('token=tok-alice')),
+  'A 上游收到 ' + String(upstreamA.seen.length) + ' 个请求，B 收到 ' + String(upstreamB.seen.length),
+)
+check(
+  'gateway: 只注入本租户的令牌，并且上游看到的只是回环 Host',
+  upstreamA.seen.every((item) => item.url.includes('token=tok-alice')) &&
+    upstreamA.seen.every((item) => item.host === '127.0.0.1:' + String(upstreamA.stubPort)) &&
+    upstreamB.seen.length === 0,
+)
+const jarB = await rawRequest(routedBase + '/?k=key-bob-0123456789')
+const cookieB = String([].concat(jarB.headers['set-cookie'] ?? [])[0] ?? '')
+const pageB = await rawRequest(routedBase + '/', { headers: { cookie: cookieB.split(';')[0] } })
+check(
+  'gateway: B 的密钥进 B 的上游，两家互不串门',
+  pageB.body.includes('tenant-b') && upstreamB.seen.every((item) => item.url.includes('token=tok-bob')),
+)
+check(
+  'gateway: 无效密钥 404；没有 Cookie 也 404（不暴露任何东西）',
+  (await rawRequest(routedBase + '/?k=wrong-key-0000000000')).status === 404 &&
+    (await rawRequest(routedBase + '/')).status === 404,
+)
+check(
+  'gateway: 别的租户的 Cookie 签名换不掉（改一个字符就失效）',
+  (await rawRequest(routedBase + '/', { headers: { cookie: cookieA.split(';')[0].replace(/.$/, 'x') } })).status === 404,
+)
+check(
+  'gateway: 伪造「租户 id + 合法签名」的组合也不行（签名密钥独立于租户密钥）',
+  (await rawRequest(routedBase + '/', { headers: { cookie: 'gate=' + String(Date.now() + 3600000) + ':bob.' + 'x'.repeat(43) } })).status === 404,
+)
+// 租户实例没起来 → 503 而不是 404（访客已证明自己持有有效密钥）
+instances.dave = { id: 'dave', upstreamPort: () => 0, token: () => '' }
+const jarD = await rawRequest(routedBase + '/?k=key-bob-0123456789')
+check('gateway: 同一个密钥仍路由到 B（新增租户不影响既有路由）', jarD.status === 303)
+// WebSocket 升级也要过门与路由
+const wsA = net.connect(routedInfo.port, '127.0.0.1')
+const wsDenied = await new Promise((resolve) => {
+  wsA.on('connect', () => wsA.write('GET /api/ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'))
+  wsA.on('close', () => resolve(true))
+  wsA.on('data', () => resolve(false))
+  wsA.on('error', () => resolve(true))
+  setTimeout(() => resolve(false), 2000)
+})
+check('gateway: 没带 Cookie 的 WebSocket 升级被直接断开（不能绕过密钥门）', wsDenied === true)
+check(
+  'gateway: info() 反映多租户模式',
+  routedInfo.gate === true && routedInfo.tenants === 'registry',
+)
+await routedProxy.stop()
+upstreamA.stub.close()
+upstreamB.stub.close()
+fs.rmSync(tenantDir, { recursive: true, force: true })
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

@@ -55,6 +55,14 @@ cat > "$HOME_DIR/profiles/web/cordis.patch.yml" <<YAML
           port: $LAN_PORT
         public:
           enabled: false
+        tenants:
+          enabled: true
+          registry: $HOME_DIR/tenants.json
+          baseDir: $HOME_DIR/homes
+          autostart: false
+          harness:
+            bin: $DSH
+            node: $NODE
 YAML
 
 # 2) 启动（不要同时用 --patch 指向同一个文件，否则 patch 会应用两次、
@@ -96,7 +104,7 @@ else
   bad "host 半 API 无响应：$(printf '%s' "$STATE" | cut -c1-160)"
 fi
 if printf '%s' "$STATE" | grep -q "\"url\":\"http://[0-9.]*:$LAN_PORT/\""; then
-  ok "局域网入口已由插件开启（:${LAN_PORT}）"
+  ok "局域网入口已由插件开启（:${LAN_PORT} ）"
 else
   bad "局域网入口未开启：$(printf '%s' "$STATE" | cut -c1-200)"
 fi
@@ -108,13 +116,85 @@ else
   bad "client 半不在 boot 图里"
 fi
 
-# 6) 插件自己开的入口能换到 Cookie
+# 6) 入口可达性
 LAN_IP="$(printf '%s' "$STATE" | sed -n 's/.*"url":"http:\/\/\([0-9.]*\):.*/\1/p' | head -1)"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://$LAN_IP:$LAN_PORT/" || true)"
-if [ "$CODE" = "303" ]; then
-  ok "局域网入口可达并完成令牌交换（http://$LAN_IP:$LAN_PORT/ → 303）"
+# 多租户下没有"全局密钥"：不带 ?k= 的请求必须被拒（404），而不是放进某个人的实例
+if [ "$CODE" = "404" ]; then
+  ok "多租户下匿名访问入口被拒（http://${LAN_IP}:${LAN_PORT}/ → 404）"
 else
-  bad "局域网入口返回 ${CODE}（期望 303）"
+  bad "匿名访问入口返回 ${CODE} （多租户下期望 404）"
+fi
+
+
+# 7) 多租户：两个真实租户实例，各自独立 DSH_HOME / 端口 / 令牌
+TENANT_API="http://127.0.0.1:$PORT/remote-connect/api/tenants"
+# 用 node 解析 JSON：sed 啃 JSON 太脆
+jsonq() { "$NODE" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j;try{j=JSON.parse(s)}catch{console.log("");return}const [kind,id]=process.argv.slice(1);const t=(j.tenants||[]).find(x=>x.id===id);if(kind==="key"){const one=id?t:j.tenant;console.log(one&&one.accessKey?one.accessKey:"")}else if(kind==="port"){console.log(t&&t.port?String(t.port):"0")}else if(kind==="up"){console.log(t&&t.running===true?"1":"0")}else{console.log("")}})' "$1" "$2"; }
+
+ADD_A="$(curl -s -b "$JAR" -H 'content-type: application/json' \
+  -d '{"name":"Alice","id":"alice"}' "$TENANT_API/add")"
+ADD_B="$(curl -s -b "$JAR" -H 'content-type: application/json' \
+  -d '{"name":"Bob","id":"bob"}' "$TENANT_API/add")"
+KEY_A="$(printf '%s' "$ADD_A" | jsonq key alice)"
+KEY_B="$(printf '%s' "$ADD_B" | jsonq key bob)"
+if [ -n "$KEY_A" ] && [ -n "$KEY_B" ] && [ "$KEY_A" != "$KEY_B" ]; then
+  ok "多租户：两个租户已建档并各自拿到独立访问密钥"
+else
+  bad "多租户：新增租户失败（${ADD_A} / ${ADD_B} ）"
+fi
+
+# 等实例起来（首次启动要从模板初始化 profile，慢一些）
+PORT_A=0; PORT_B=0
+for _ in $(seq 1 120); do
+  TLIST="$(curl -s -b "$JAR" "$TENANT_API")"
+  PORT_A="$(printf '%s' "$TLIST" | jsonq port alice)"
+  PORT_B="$(printf '%s' "$TLIST" | jsonq port bob)"
+  if [ "$(printf '%s' "$TLIST" | jsonq up alice)" = "1" ] && [ "$(printf '%s' "$TLIST" | jsonq up bob)" = "1" ]; then break; fi
+  sleep 1
+done
+if [ "${PORT_A:-0}" -gt 0 ] && [ "${PORT_B:-0}" -gt 0 ] && [ "$PORT_A" != "$PORT_B" ]; then
+  ok "多租户：两个实例各自监听独立回环端口（${PORT_A} / ${PORT_B} ）"
+else
+  bad "多租户：实例端口异常（alice=${PORT_A} bob=${PORT_B} ）"
+fi
+if [ -d "$HOME_DIR/homes/alice/sessions" ] || [ -d "$HOME_DIR/homes/alice/profiles" ]; then
+  if [ -d "$HOME_DIR/homes/bob/profiles" ]; then
+    ok "多租户：租户各自拥有独立的 DSH_HOME（会话/凭据/设置互不可见）"
+  else
+    bad "多租户：bob 的 DSH_HOME 未初始化"
+  fi
+else
+  bad "多租户：alice 的 DSH_HOME 未初始化"
+fi
+
+# 网关路由：A 的密钥进 A 的实例，B 的密钥进 B 的实例
+GATE="http://$LAN_IP:$LAN_PORT"
+JAR_A="$HOME_DIR/jar-a.txt"; JAR_B="$HOME_DIR/jar-b.txt"
+CODE_A="$(curl -s -c "$JAR_A" -o /dev/null -w '%{http_code}' "$GATE/?k=$KEY_A")"
+CODE_B="$(curl -s -c "$JAR_B" -o /dev/null -w '%{http_code}' "$GATE/?k=$KEY_B")"
+PAGE_A="$(curl -s -b "$JAR_A" -o /dev/null -w '%{http_code}' "$GATE/")"
+PAGE_B="$(curl -s -b "$JAR_B" -o /dev/null -w '%{http_code}' "$GATE/")"
+if [ "$CODE_A" = "303" ] && [ "$CODE_B" = "303" ] && [ "$PAGE_A" != "401" ] && [ "$PAGE_B" != "401" ]; then
+  ok "多租户：网关按密钥把人送到各自实例（A→${PAGE_A} B→${PAGE_B} ，均非 401）"
+else
+  bad "多租户：网关路由异常（换 Cookie A=${CODE_A}/${PAGE_A} B=${CODE_B}/${PAGE_B} ）"
+fi
+if [ "$(curl -s -o /dev/null -w '%{http_code}' "$GATE/?k=not-a-real-key-0000")" = "404" ]; then
+  ok "多租户：无效密钥 404（不暴露任何东西）"
+else
+  bad "多租户：无效密钥未被拒绝"
+fi
+
+# 隔离的硬证据：拿 A 实例的令牌去打 B 实例的端口，必须 401
+TOK_A="$(grep -o "http://127.0.0.1:[0-9]*/?token=[A-Za-z0-9_-]*" "$HOME_DIR/homes/alice/instance.log" 2>/dev/null | tail -1 | sed 's/.*token=//')"
+if [ -z "$TOK_A" ]; then TOK_A="unknown"; fi
+CROSS="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_B/?token=$TOK_A" || true)"
+SELF="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT_A/?token=$TOK_A" || true)"
+if [ "$CROSS" = "401" ]; then
+  ok "多租户：把一个租户的令牌拿到另一个实例上被拒（401）—— 进程级隔离成立"
+else
+  bad "多租户：交叉令牌没有被拒绝（cross=${CROSS} self=${SELF} ）"
 fi
 
 echo

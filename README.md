@@ -193,7 +193,7 @@ Hygiene rules the code enforces:
 - `serve --public` refuses to start without `--key` (unless you explicitly pass `--allow-no-key`, which is not recommended).
 - The generated server template logs a **redacted** request line (`$uri`, no query), so `?k=` never lands on disk; `doctor` can check the server log and local logs for leaks.
 - Harness itself always binds loopback; the plugin never offers a "bind 0.0.0.0" option for the upstream.
-- Not multi-tenant: every visitor shares the same Harness and sees the same session list. Deploy one instance per person.
+- **Tenant isolation is per Harness process.** One Harness instance serves exactly one person: its sessions, credentials, settings, workspace and launch token all live in that instance's own `DSH_HOME`. So multi-tenancy is not a flag on a single instance — it is the gateway routing each tenant to **their own** instance. That layer (per-tenant credentials → per-tenant upstream + per-tenant token, instances started and supervised by this plugin) is being built now; the underlying mechanism is already verified: two instances on one machine boot with separate `DSH_HOME`s on separate loopback ports, each prints its own launch token, and using one tenant's token against the other tenant's port returns **401**.
 
 ---
 
