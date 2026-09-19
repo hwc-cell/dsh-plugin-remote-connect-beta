@@ -62,5 +62,14 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hwc-cell/dsh-plugin-remote-connect.git"
+  },
+  "homepage": "https://github.com/hwc-cell/dsh-plugin-remote-connect#readme",
+  "bugs": {
+    "url": "https://github.com/hwc-cell/dsh-plugin-remote-connect/issues"
+  },
+  "author": "hwc-cell"
 }
