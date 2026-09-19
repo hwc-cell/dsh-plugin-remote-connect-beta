@@ -214,6 +214,11 @@ const beforeTeardown =
         },
       )
 check('proxy: 局域网端口可连（经 Cordis 生命周期管理）', beforeTeardown, (liveUrl ?? 'no url') + ' → ' + teardownProbe)
+check(
+  'proxy: 局域网入口不带密钥也要通（接上访问口令 provider 就会整站 404 —— 已回归过一次）',
+  liveUrl !== null && (await fetch(liveUrl, { redirect: 'manual' }).then((r) => r.status).catch(() => 0)) !== 404,
+  String(liveUrl),
+)
 for (const dispose of disposers) dispose()
 await new Promise((resolve) => setTimeout(resolve, 300))
 const afterTeardown =
