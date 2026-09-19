@@ -15,6 +15,25 @@ Two ways to use it, one shared core:
 
 ---
 
+## Who runs this, and where
+
+This plugin is meant to be **installed by whoever wants a remote entry, on their own machine**.
+It is MIT-licensed and dependency-free on purpose: `npx dsh-plugin-remote-connect serve` is the
+whole onboarding, and nothing ever talks to a relay or to an account of ours.
+
+One consequence is worth stating plainly: **a Harness runs on the machine where it is installed,
+and it can execute commands there.** Handing out access means handing out access to that computer.
+So when a second person wants in, the recommended answer is "install it on your own machine", not
+"use mine".
+
+For the case where one machine genuinely serves several people (home server, shared workstation),
+the plugin has a multi-tenant layer: each tenant gets their **own** Harness process with its own
+`DSH_HOME`, port and launch token, and the gateway routes each access key to its own instance.
+It is **off by default**, and the trade-offs are spelled out in
+[`docs/multi-tenant.md`](docs/multi-tenant.md).
+
+---
+
 ## Four backends (pick one; same core)
 
 | Backend | Work required on the server | Who it suits | Reachability in mainland China |

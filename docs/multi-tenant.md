@@ -2,6 +2,17 @@
 
 [English](multi-tenant.md) | [中文](multi-tenant.zh.md)
 
+> **Read this first.** Every tenant's Harness runs **on the machine where you installed this
+> plugin**, and a Harness can execute commands and touch files there. Giving someone a tenant link
+> is therefore equivalent to giving them an account on that computer. Do this only for people you
+> would let sit down at it.
+>
+> If someone just wants their own remote entry, the right answer is the cheap one: **they install
+> this plugin on their own machine** (MIT, `npx dsh-plugin-remote-connect serve --public ...`). That
+> is what this project is built for; the multi-tenant layer below exists for the case where one
+> machine really does serve several people (a home lab, a shared workstation, a family box), and it
+> is off by default.
+
 A DSH Harness instance is **single-user by construction**: its sessions, credentials, settings,
 workspace and launch token all live inside one `DSH_HOME`. There is no account system inside it
 (the shipped `anonymous-user-id` is a telemetry UUID, not an identity). So multi-tenancy cannot be
