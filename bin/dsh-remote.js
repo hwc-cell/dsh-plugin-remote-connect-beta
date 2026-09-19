@@ -295,6 +295,8 @@ async function commandCheck(flags) {
     sshPort: flags['ssh-port'] !== undefined ? Number(flags['ssh-port']) : undefined,
     remotePort: flags['remote-port'] !== undefined ? Number(flags['remote-port']) : undefined,
     localPort: flags['local-port'] !== undefined ? Number(flags['local-port']) : undefined,
+    // 远端口可能被服务器上没回收的旧会话占着：--wait <秒> 会自动等它释放再判定
+    waitMs: flags.wait !== undefined ? Number(flags.wait) * 1000 : 0,
   })
   for (const result of results) printResult(result)
   const failed = results.filter((item) => !item.ok)
