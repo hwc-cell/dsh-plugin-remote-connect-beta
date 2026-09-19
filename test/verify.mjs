@@ -1933,5 +1933,57 @@ check(
 )
 await downProxy.stop()
 
+// ── 状态灯三态 + 深色模式 ──
+
+const entryDot = (payload) => {
+  clientExports.internals.setState({ data: payload })
+  const html = renderToStaticMarkup(React.createElement(registrations[0].Component, { wide: true, t: markerT }))
+  const match = /class="dshRcDot([^"]*)"/.exec(html)
+  return match === null ? null : match[1].trim()
+}
+const baseState = {
+  ok: true, busy: false, canControl: true,
+  config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+  upstream: { hasToken: true, port: 43129, source: 'webServer' },
+  lan: { running: true, url: 'http://192.0.2.10:8787/' },
+  public: { running: false, domain: 'dsh.example.com', port: 8788, entry: null, tunnel: null },
+  qr: null, error: null,
+}
+check('状态灯：局域网在跑 → 绿灯（isOk）', entryDot(baseState) === 'isOk', String(entryDot(baseState)))
+check(
+  '状态灯：公网开着但隧道在重连 → 红灯（isBad，网络异常）',
+  entryDot({
+    ...baseState,
+    public: {
+      running: true, domain: 'dsh.example.com', port: 8788,
+      entry: 'https://dsh.example.com/?k=x',
+      tunnel: { phase: 'reconnecting', detail: 'dropped' },
+    },
+  }) === 'isBad',
+)
+check(
+  '状态灯：两个入口都没开 → 橙灯（isOff，未开启服务）',
+  entryDot({ ...baseState, lan: { running: false, url: null } }) === 'isOff',
+)
+check(
+  '状态灯：拿不到上游令牌也算网络异常（红灯）',
+  entryDot({ ...baseState, upstream: { hasToken: false } }) === 'isBad',
+)
+check(
+  '状态灯：配置有问题也是红灯',
+  entryDot({ ...baseState, config: { problems: ['public.domain 必填'] } }) === 'isBad',
+)
+const panelSource = fs.readFileSync(path.join(root, 'lib/client.js'), 'utf8')
+check(
+  '深色模式：面板与失败页都有 prefers-color-scheme 适配，且二维码仍保持白底（否则手机扫不出）',
+  panelSource.includes('@media (prefers-color-scheme: dark)') &&
+    panelSource.includes(".dshRcQr{margin-top:10px;display:flex;justify-content:center;background:#fff") &&
+    fs.readFileSync(path.join(root, 'lib/core/proxy.js'), 'utf8').includes('prefers-color-scheme: dark'),
+)
+check(
+  '状态灯：三态文案走字典（中英都有）',
+  markerT('dot.ok') === '«dot.ok»' && panelSource.includes("'dot.bad': '网络异常'") && panelSource.includes("'dot.bad': 'Network problem'"),
+)
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

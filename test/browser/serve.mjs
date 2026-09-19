@@ -48,6 +48,29 @@ const STATE = {
   error: null,
 }
 
+/** 隧道掉线（状态灯应为红）。 */
+const STATE_DOWN = {
+  ok: true, busy: false, canControl: true,
+  config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+  lan: { running: false, url: null, port: 8787 },
+  public: {
+    running: true, domain: 'dsh.example.com', port: 8788,
+    entry: 'https://dsh.example.com/?k=9f2c41ab77e34d0e',
+    tunnel: { phase: 'reconnecting', code: 'tunnel.reconnecting', params: { reason: 'exit 255', seconds: '35' }, detail: 'Tunnel dropped (exit 255); reconnecting in 35s', publicUrl: null, restarts: 4 },
+    accessKeyGenerated: true, hasToken: true,
+  },
+  qr: null, error: null,
+}
+
+/** 两个入口都没开（状态灯应为橙）。 */
+const STATE_OFF = {
+  ok: true, busy: false, canControl: true,
+  config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+  lan: { running: false, url: null, port: 8787 },
+  public: { running: false, domain: 'dsh.example.com', port: 8788, entry: null, tunnel: null, accessKeyGenerated: true, hasToken: true },
+  qr: null, error: null,
+}
+
 /** 多租户：一张卡片里三个人，两个在跑、一个起不来、一个还没开。 */
 const STATE_TENANTS = {
   ok: true,
@@ -147,10 +170,11 @@ const STATE_TAILSCALE = {
   error: null,
 }
 
-const PAGE = (stateJson, frameHeight, shotMode, zoom) => `<!doctype html>
+const PAGE = (stateJson, frameHeight, shotMode, zoom, dark) => `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>remote-connect client preview</title>
 <style>
   html{zoom:${zoom}}
+  ${dark ? 'html{color-scheme:dark}body{background:#101114!important;color:#e8e8ea}' : ''}
   body{margin:0;background:#eceef1;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#18191c}
   .stage{display:flex;gap:24px;padding:24px}
   /* 模拟 Harness 的 .frame：position:relative + 一个确定尺寸的容器 */
@@ -169,7 +193,7 @@ const PAGE = (stateJson, frameHeight, shotMode, zoom) => `<!doctype html>
   <div class="note">
     <h3>client 半真浏览器预览</h3>
     <p>左侧是模拟的侧栏底部：先渲染「远程连接」入口，再打开面板（数据是假的，扫码链接也是假的）。</p>
-    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=tailscale">tailscale 零交付</a>（域名留空、地址来自 funnel） · <a href="/?mode=tenants">多租户</a>（三人各一个实例）</p>
+    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=tailscale">tailscale 零交付</a> · <a href="/?mode=tenants">多租户</a> · <a href="/?mode=down">隧道掉线（红灯）</a> · <a href="/?mode=off">未开启服务（橙灯）</a> · <a href="/?dark=1">深色模式</a></p>
     <p>这份页面按 client-modules 的方式装载 bundle：先 <code>window.__ModuleLoader__.load({id, factory})</code>，
        再用真实 React 渲染 <code>apply()</code> 注册进槽位的组件。</p>
     <p id="status">…</p>
@@ -264,13 +288,18 @@ const server = http.createServer((req, res) => {
             ? STATE_TAILSCALE
             : url.searchParams.get('mode') === 'tenants'
               ? STATE_TENANTS
-              : STATE,
+              : url.searchParams.get('mode') === 'down'
+                ? STATE_DOWN
+                : url.searchParams.get('mode') === 'off'
+                  ? STATE_OFF
+                  : STATE,
         ),
         // 截图用：把模拟 frame 拉高，面板就不会被 overflow 裁掉
         url.searchParams.get('frame') ?? '720',
         url.searchParams.get('shot') === '1',
         // 截图用：整体缩放，让完整面板能落进一个视口
         url.searchParams.get('zoom') ?? '1',
+        url.searchParams.get('dark') === '1',
       ),
     )
   if (pathname === '/client.js') return send('text/javascript; charset=utf-8', fs.readFileSync(path.join(root, 'lib/client.js')))

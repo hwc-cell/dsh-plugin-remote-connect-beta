@@ -16,6 +16,15 @@ untouched on purpose), or straight from the repository.
 
 ### Added
 
+- Dark mode: the panel and the host-side failure pages follow `prefers-color-scheme` (theme
+  variables first, dark fallbacks when a variable is missing). The QR code deliberately stays
+  white-on-black so phones can still scan it.
+- The sidebar status dot now has three states: **green** healthy, **red** network problem
+  (tunnel reconnecting/down, missing upstream token, or config problems), **amber** nothing
+  started. Each state carries a localized title/aria-label, and the preview harness can render
+  all three (`?mode=down`, `?mode=off`, `?dark=1`).
+
+
 - Password de-duplication on the Mac side, per the updated spec: a new access password is refused if it
   matches the current one or any key that has been active before (only SHA-256 16-hex fingerprints are
   kept, never old plaintext), with "already in use, pick another" and no hint of whose it is. The check
