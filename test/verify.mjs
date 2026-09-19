@@ -1325,5 +1325,74 @@ staleUpstream.close()
 fs.rmSync(injectLog, { force: true })
 fs.rmSync(healLog, { force: true })
 
+// ──────────────────── 边缘凭证：生成与设置流程 ────────────────────
+
+const credential = await import(pathToFileURL(path.join(root, 'lib/core/credential.js')).href)
+const passphrase = credential.generatePassphrase()
+check(
+  'credential: 生成的是好输入的口令（词表短语 + 数字，默认 6 词）',
+  passphrase.password.split('-').length === 7 &&
+    passphrase.words === 6 &&
+    passphrase.password.split('-').slice(0, 6).every((word) => credential.WORDS.includes(word)) &&
+    bits9(passphrase.bits),
+  passphrase.password + '（约 ' + String(passphrase.bits) + ' bit）',
+)
+function bits9(value) {
+  return Number.isFinite(value) && value >= 40
+}
+check(
+  'credential: 两次生成不同（用的是真随机源）',
+  credential.generatePassphrase().password !== credential.generatePassphrase().password,
+)
+check(
+  'credential: 词数可调，且不会越界（4–10）',
+  credential.generatePassphrase({ words: 3 }).words === 4 && credential.generatePassphrase({ words: 99 }).words === 10,
+)
+check(
+  'credential: --random 模式给纯随机串（≥16 位、强度更高）',
+  (() => {
+    const random = credential.generateRandomPassword({ length: 24 })
+    return random.password.length >= 16 && random.bits > 100 && /^[A-Za-z0-9_-]+$/.test(random.password)
+  })(),
+)
+check(
+  'credential: 确定性随机源可用（便于测试与复现）',
+  credential.generatePassphrase({ randomBytes: (size) => Buffer.alloc(size, 9) }).password ===
+    credential.generatePassphrase({ randomBytes: (size) => Buffer.alloc(size, 9) }).password,
+)
+const credCommands = credential.setupCommands({ user: 'dsh', authFile: '/etc/nginx/.htpasswd-dsh', password: 'alpha-beta-123' })
+check(
+  'credential: 设置命令把口令经 stdin 传入（不出现在进程列表）',
+  credCommands.htpasswd.includes('htpasswd -i -c /etc/nginx/.htpasswd-dsh dsh') &&
+    credCommands.htpasswd.includes('printf %s') &&
+    credCommands.htpasswd.includes('systemctl reload nginx'),
+)
+check(
+  'credential: 给出 openssl 兜底与 401 验证命令',
+  credCommands.openssl.includes('openssl passwd -apr1 -stdin') && credCommands.verify.includes('401'),
+)
+const cliCred = runCli(['credential', '--json'], { DSH_REMOTE_LANG: 'en' })
+check(
+  'cli: credential --json 输出用户名/口令/命令，且不写进任何日志文件',
+  cliCred.status === 0 &&
+    (() => {
+      const payload = JSON.parse(cliCred.stdout)
+      return (
+        payload.user === 'dsh' &&
+        typeof payload.password === 'string' &&
+        payload.password.length > 10 &&
+        payload.commands.htpasswd.includes('htpasswd -i -c')
+      )
+    })(),
+  cliCred.stdout.slice(0, 60).replace(/\n/g, ' '),
+)
+const cliCredZh = runCli(['credential'], { DSH_REMOTE_LANG: 'zh' })
+check(
+  'cli: credential 中文输出包含设置步骤与两条提醒',
+  cliCredZh.stdout.includes('在服务器上设置它') &&
+    cliCredZh.stdout.includes('存进密码管理器') &&
+    cliCredZh.stdout.includes('别把口令写进 URL'),
+)
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

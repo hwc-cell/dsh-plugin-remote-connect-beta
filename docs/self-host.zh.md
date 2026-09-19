@@ -165,6 +165,39 @@ npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
 
 ---
 
+## 4.5 边缘凭证（别自己现编一个口令）
+
+这道边缘口令是你机器前面唯一的一道门，所以不要随手编：
+
+```bash
+npx dsh-plugin-remote-connect credential            # 一句好输入的口令（约 46 bit）+ 现成的设置命令
+npx dsh-plugin-remote-connect credential --random   # 或 24 位纯随机串（约 141 bit）
+```
+
+口令**只打印一次**（请立刻存进密码管理器），同时给出两种在服务器上设置它的方式。口令经 stdin 传入，
+不会出现在进程列表或 shell 历史里：
+
+```bash
+printf %s '<口令>' | sudo htpasswd -i -c /etc/nginx/.htpasswd-dsh dsh
+sudo chmod 640 /etc/nginx/.htpasswd-dsh && sudo nginx -t && sudo systemctl reload nginx
+```
+
+也可以让安装脚本代劳（同样走 stdin）：
+
+```bash
+printf %s '<口令>' | sudo bash /tmp/dsh-server-setup.sh install --auth-password-stdin
+```
+
+验证这道门：
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://dsh.example.com/                 # 不带凭据应为 401
+curl -sS -o /dev/null -w '%{http_code}\n' -u 'dsh:<口令>' https://dsh.example.com/   # 不应再是 401
+```
+
+轮换这道口令**不影响**插件的 `?k=` 密钥，反之亦然 —— 两道独立的门。永远不要把口令写进 URL
+（`https://user:pass@host/`）：浏览器会剥离，而且会漏进历史与日志。
+
 ## 5. 隧道账号
 
 ```bash

@@ -169,6 +169,41 @@ npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
 
 ---
 
+## 4.5 The edge credential (do this instead of inventing a password)
+
+The edge password is the only door in front of your machine, so do not improvise it:
+
+```bash
+npx dsh-plugin-remote-connect credential            # a typeable passphrase (~46 bit) + the exact commands
+npx dsh-plugin-remote-connect credential --random   # or a 24-character random one (~141 bit)
+```
+
+It prints the password **once** (save it in your password manager) and the two ways to install
+it on the server. The password travels over stdin, so it never lands in the process list or shell
+history:
+
+```bash
+printf %s '<the password>' | sudo htpasswd -i -c /etc/nginx/.htpasswd-dsh dsh
+sudo chmod 640 /etc/nginx/.htpasswd-dsh && sudo nginx -t && sudo systemctl reload nginx
+```
+
+Or let the generated installer do it, also over stdin:
+
+```bash
+printf %s '<the password>' | sudo bash /tmp/dsh-server-setup.sh install --auth-password-stdin
+```
+
+Verify the gate, then verify it opens with the password:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://dsh.example.com/                 # 401 without credentials
+curl -sS -o /dev/null -w '%{http_code}\n' -u 'dsh:<the password>' https://dsh.example.com/   # not 401
+```
+
+Rotating this password does **not** affect the plugin's `?k=` key, and rotating `?k=` does not
+affect this one — two independent doors. Never put the password in a URL
+(`https://user:pass@host/`): browsers strip it and it leaks into history and logs.
+
 ## 5. The tunnel account
 
 ```bash

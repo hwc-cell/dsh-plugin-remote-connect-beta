@@ -21,6 +21,7 @@ import { buildServerSetupScript, buildServerUninstallScript } from '../lib/core/
 import { createTenancy } from '../lib/core/tenancy.js'
 import { defaultGateSecretPath, defaultRegistryPath, loadOrCreateGateSecret, pluginStateDir } from '../lib/core/paths.js'
 import { createRegistry, defaultTenantBaseDir, generateAccessKey, slugifyId } from '../lib/core/tenant.js'
+import { generatePassphrase, generateRandomPassword, setupCommands } from '../lib/core/credential.js'
 import { discoverHarnessBin, discoverRuntime } from '../lib/core/instance.js'
 import {
   NGINX_UPGRADE_MAP,
@@ -398,6 +399,42 @@ function tenantLinks(tenant, flags) {
  * 刻意**不**在这里拉起/停止实例：实例属于"跑网关的那个进程"（DSH 插件或 `serve --multi`），
  * CLI 起了也会随命令退出而变成孤儿进程。启停请在宿主窗口的面板里做。
  */
+/**
+ * `dsh-remote credential` —— 生成并给出"怎么在服务器上设置边缘口令"。
+ *
+ * 这是公网入口唯一一道门，所以默认给的是**能用手输的短语**（46 bit 在线强度），
+ * 并且把设置命令连同 `--auth-password-stdin` 的用法一次给全，用户不用自己想口令。
+ */
+function commandCredential(flags) {
+  const user = typeof flags.user === 'string' ? flags.user : 'dsh'
+  const authFile = typeof flags['auth-file'] === 'string' ? flags['auth-file'] : '/etc/nginx/.htpasswd-dsh'
+  const random = flags.random === true
+  const generated = random
+    ? generateRandomPassword({ length: flags.length !== undefined ? Number(flags.length) : 24 })
+    : generatePassphrase({
+        words: flags.words !== undefined ? Number(flags.words) : undefined,
+        digits: flags.digits !== undefined ? Number(flags.digits) : undefined,
+      })
+  const commands = setupCommands({ user, authFile, password: generated.password })
+
+  if (flags.json === true) {
+    process.stdout.write(
+      JSON.stringify({ user, authFile, password: generated.password, bits: generated.bits, commands }, null, 2) + '\n',
+    )
+    return
+  }
+  process.stdout.write(t('cli.cred.title') + '\n\n')
+  process.stdout.write(t('cli.cred.user') + ' ' + user + '\n')
+  process.stdout.write(t('cli.cred.password') + ' ' + generated.password + '\n')
+  process.stdout.write(t('cli.cred.strength', { bits: String(generated.bits) }) + '\n\n')
+  process.stdout.write(t('cli.cred.step1') + '\n  ' + commands.htpasswd + '\n')
+  process.stdout.write(t('cli.cred.step1b') + '\n  ' + commands.openssl + '\n\n')
+  process.stdout.write(t('cli.cred.step2') + '\n  ' + commands.verify + '\n\n')
+  process.stdout.write(t('cli.cred.warnSave') + '\n')
+  process.stdout.write(t('cli.cred.warnIndependent') + '\n')
+  process.stdout.write(t('cli.cred.warnNoUrl') + '\n')
+}
+
 function commandTenant(flags, rest) {
   const action = rest[0] ?? 'list'
   const { registry: file, baseDir } = tenantRegistryOptions(flags)
@@ -697,6 +734,7 @@ async function main() {
   if (command === 'uninstall-server') return commandSetupServer({ ...flags, uninstall: true })
   if (command === 'doctor') return await commandDoctor(flags)
   if (command === 'tenant' || command === 'tenants') return commandTenant(flags, rest)
+  if (command === 'credential' || command === 'creds') return commandCredential(flags)
   fail(t('cli.error.unknownCommand', { command }) + '\n\n' + helpText())
 }
 

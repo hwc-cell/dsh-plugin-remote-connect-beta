@@ -5,6 +5,8 @@
 #   sudo bash server-setup.sh install --dry-run     # 打印将要执行的动作
 #   sudo bash server-setup.sh install               # 幂等安装
 #   sudo bash server-setup.sh install --skip-cert   # 已有证书时跳过签发
+#   printf %s '<边缘口令>' | sudo bash server-setup.sh install --auth-password-stdin
+#                                                # 非交互设置边缘口令（口令不进命令历史）
 #   sudo bash server-setup.sh uninstall             # 撤销（默认保留隧道账号）
 #   sudo bash server-setup.sh uninstall --purge-user
 #
@@ -37,6 +39,7 @@ for arg in "$@"; do
     --skip-cert) SKIP_CERT=1 ;;
     --skip-dns) SKIP_DNS=1 ;;
     --purge-user) PURGE_USER=1 ;;
+    --auth-password-stdin) AUTH_PASSWORD_STDIN=1 ;;
     *) ARGS+=("$arg") ;;
   esac
 done
@@ -165,6 +168,24 @@ ensure_auth_file() {
   if [ -f "$AUTH_FILE" ]; then
     say "   已存在，保留现有口令（如需重置：sudo htpasswd $AUTH_FILE $AUTH_USER）"
     return 0
+  fi
+  # 非交互：口令从 stdin 传入（printf %s '<口令>' | sudo bash 本脚本 install --auth-password-stdin）
+  if [ "$AUTH_PASSWORD_STDIN" = "1" ]; then
+    if IFS= read -r AUTH_PASSWORD; then
+      if [ -z "$AUTH_PASSWORD" ]; then say "   ✖ 从 stdin 读到的口令为空"; return 1; fi
+      if have htpasswd; then
+        run sh -c "printf '%s' \"\$1\" | htpasswd -i -c \"$AUTH_FILE\" \"$AUTH_USER\"" _ "$AUTH_PASSWORD"
+      else
+        hash="$(printf '%s' "$AUTH_PASSWORD" | openssl passwd -apr1 -stdin)"
+        printf '%s:%s\n' "$AUTH_USER" "$hash" > "$AUTH_FILE"
+      fi
+      chmod 640 "$AUTH_FILE"
+      if id www-data >/dev/null 2>&1; then chown root:www-data "$AUTH_FILE"; fi
+      say "   已写入 $AUTH_FILE（口令来自 stdin，未写入脚本、未进命令历史）"
+      unset AUTH_PASSWORD
+      return 0
+    fi
+    say "   ✖ --auth-password-stdin 需要从管道传入口令"; return 1
   fi
   if ! have htpasswd; then
     say "   缺少 htpasswd：请先安装（Debian/Ubuntu: apt install -y apache2-utils；RHEL: dnf install -y httpd-tools）"
