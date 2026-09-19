@@ -1224,5 +1224,55 @@ upstreamA.stub.close()
 upstreamB.stub.close()
 fs.rmSync(tenantDir, { recursive: true, force: true })
 
+// ──────────────────── 令牌注入的两个真实坑（回归） ────────────────────
+// 坑 1：浏览器留着上一次 Harness 的 dsh-auth-* Cookie 时旧逻辑不再注入令牌，
+//       而 Harness 重启后那个 Cookie 已失效 → 页面能开但"暂无会话"，刷新也没用。
+// 坑 2：插件缓存的启动令牌在 Harness 重启后过期 → 注入过期令牌 → 上游 401。
+
+let upstreamToken = 'token-one-aaaaaaaaaaaa'   // 上游当前认可的令牌
+let rejectTokenOne = false                     // 翻转后：旧令牌一律 401
+const seenByUpstream = []
+const flakyUpstream = http.createServer((req, res) => {
+  seenByUpstream.push(req.url)
+  const stale = rejectTokenOne && req.url.includes('token=token-one-aaaaaaaaaaaa')
+  if (stale) {
+    res.writeHead(401, { 'content-type': 'text/plain' })
+    res.end('unauthorized')
+    return
+  }
+  res.writeHead(200, { 'content-type': 'text/html' })
+  res.end('<!doctype html><title>ok</title><body>ok</body>')
+})
+const flakyPort = await listen(flakyUpstream)
+const injectLog = path.join(root, 'test', '.inject-fixture.log')
+const writeFixture = (token) =>
+  fs.writeFileSync(injectLog, 'dsh web: http://127.0.0.1:' + String(flakyPort) + '/?token=' + token + '\n')
+writeFixture(upstreamToken)
+const injectProxy = createProxy({ port: 0, listenHost: '127.0.0.1', upstreamPort: flakyPort, logPaths: [injectLog] })
+const injectInfo = await injectProxy.start()
+const stale = { cookie: 'dsh-auth-old=definitely-stale' }
+
+const first = await rawRequest(HOST + String(injectInfo.port) + '/', { headers: stale })
+check(
+  'proxy: 带着旧 dsh-auth Cookie 访问首页时仍注入令牌（否则永远"暂无会话"）',
+  first.status === 200 && seenByUpstream.some((url) => url.includes('token=token-one-aaaaaaaaaaaa')),
+  '上游收到：' + seenByUpstream.join(' | ').slice(0, 100),
+)
+
+// Harness 重启：日志里换成新令牌，旧令牌立刻失效
+upstreamToken = 'token-two-bbbbbbbbbbbb'
+writeFixture(upstreamToken)
+rejectTokenOne = true
+const retried = await rawRequest(HOST + String(injectInfo.port) + '/', { headers: stale })
+check(
+  'proxy: 注入的令牌过期（上游 401）时重新发现并重试，最终 200',
+  retried.status === 200 && seenByUpstream.some((url) => url.includes('token=token-two-bbbbbbbbbbbb')),
+  '上游收到：' + seenByUpstream.join(' | ').slice(0, 140),
+)
+
+await injectProxy.stop()
+flakyUpstream.close()
+fs.rmSync(injectLog, { force: true })
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)
