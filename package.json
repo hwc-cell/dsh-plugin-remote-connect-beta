@@ -1,5 +1,5 @@
 {
-  "name": "dsh-plugin-remote-connect",
+  "name": "dsh-plugin-remote-connect-beta",
   "version": "0.1.0-beta.1",
   "description": "让 DSH Harness 可从局域网或公网访问：本机反向代理（含手机适配与访问密钥门）+ ssh 反向隧道 + 服务器配置生成与前置检查。",
   "type": "module",
@@ -62,15 +62,15 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "beta"
+    "tag": "latest"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hwc-cell/dsh-plugin-remote-connect.git"
+    "url": "git+https://github.com/hwc-cell/dsh-plugin-remote-connect-beta.git"
   },
-  "homepage": "https://github.com/hwc-cell/dsh-plugin-remote-connect#readme",
+  "homepage": "https://github.com/hwc-cell/dsh-plugin-remote-connect-beta#readme",
   "bugs": {
-    "url": "https://github.com/hwc-cell/dsh-plugin-remote-connect/issues"
+    "url": "https://github.com/hwc-cell/dsh-plugin-remote-connect-beta/issues"
   },
   "author": "hwc-cell"
 }

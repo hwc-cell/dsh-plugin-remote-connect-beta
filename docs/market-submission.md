@@ -6,7 +6,7 @@
 
 | 位置 | 现在 | 改成 |
 | --- | --- | --- |
-| `package.json` → `name` | `dsh-plugin-remote-connect` | `@<your-scope>/dsh-plugin-remote-connect`（或确认无 scope 名可用） |
+| `package.json` → `name` | `dsh-plugin-remote-connect-beta` | `@<your-scope>/dsh-plugin-remote-connect-beta`（或确认无 scope 名可用） |
 | `package.json` → `repository/homepage/bugs/author` | 空 | 你的仓库与联系方式 |
 | `LICENSE` | 版权行留空 | `<你的名字或组织>` |
 | `SECURITY.md` | 通用 | 你的漏洞披露渠道（邮箱 / GitHub Security Advisory） |

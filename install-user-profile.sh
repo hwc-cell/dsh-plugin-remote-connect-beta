@@ -12,7 +12,7 @@ set -euo pipefail
 DSH_HOME_DIR="${DSH_HOME:-$HOME/Library/Application Support/dsh-desktop/harness}"
 PROFILE="$DSH_HOME_DIR/profiles/web"
 REPO="$(cd "$(dirname "$0")" && pwd)"
-PKG="dsh-plugin-remote-connect"
+PKG="dsh-plugin-remote-connect-beta"
 LAN_PORT="${LAN_PORT:-8787}"
 PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
 SSH_USER="${SSH_USER:-dshtunnel}"

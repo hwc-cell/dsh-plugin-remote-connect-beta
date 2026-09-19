@@ -1,4 +1,4 @@
-# dsh-plugin-remote-connect
+# dsh-plugin-remote-connect-beta
 
 English | [中文](README.zh.md)
 
@@ -18,7 +18,7 @@ Two ways to use it, one shared core:
 ## Who runs this, and where
 
 This plugin is meant to be **installed by whoever wants a remote entry, on their own machine**.
-It is MIT-licensed and dependency-free on purpose: `npx dsh-plugin-remote-connect serve` is the
+It is MIT-licensed and dependency-free on purpose: `npx dsh-plugin-remote-connect-beta serve` is the
 whole onboarding, and nothing ever talks to a relay or to an account of ours.
 
 One consequence is worth stating plainly: **a Harness runs on the machine where it is installed,
@@ -86,7 +86,7 @@ Public mode adds an **access-key gate**: anything without a valid `?k=` gets a p
 ```bash
 # 1) install into the profile directory (DSH resolves plugin names from there)
 cd "$HOME/Library/Application Support/dsh-desktop/harness/profiles/web"   # or ${DSH_HOME:-$HOME/.dsh}/profiles/web
-npm install dsh-plugin-remote-connect
+npm install dsh-plugin-remote-connect-beta
 
 # 2) add one entry to cordis.patch.yml in the same directory
 # 3) restart DSH Desktop
@@ -94,8 +94,8 @@ npm install dsh-plugin-remote-connect
 
 ```yaml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan:
           enabled: true
@@ -126,7 +126,7 @@ Panel switches work **only in the host window** (loopback, not through a proxy);
 ## Install (CLI only)
 
 ```bash
-npx dsh-plugin-remote-connect serve        # LAN entry; prints a QR code in the terminal
+npx dsh-plugin-remote-connect-beta serve        # LAN entry; prints a QR code in the terminal
 ```
 
 Public entry with your own server:

@@ -259,7 +259,7 @@ const fakeDocument = {
 }
 new Function('window', 'document', source)(fakeWindow, fakeDocument)
 
-check('client: 走 __ModuleLoader__.load 注册', captured !== null && captured.id === 'dsh-plugin-remote-connect')
+check('client: 走 __ModuleLoader__.load 注册', captured !== null && captured.id === 'dsh-plugin-remote-connect-beta')
 
 const clientExports = captured.factory((specifier) => {
   if (specifier === 'react') return React

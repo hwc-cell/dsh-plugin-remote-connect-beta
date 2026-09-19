@@ -190,7 +190,7 @@ const PAGE = (stateJson, frameHeight, shotMode, zoom) => `<!doctype html>
     var definition = window.__loaded;
     var status = document.getElementById('status');
     if (definition === null) { status.textContent = '✖ bundle 没有调用 __ModuleLoader__.load'; return; }
-    if (definition.id !== 'dsh-plugin-remote-connect') { status.textContent = '✖ bundle id 不对：' + definition.id; return; }
+    if (definition.id !== 'dsh-plugin-remote-connect-beta') { status.textContent = '✖ bundle id 不对：' + definition.id; return; }
     var clientExports = definition.factory(function (specifier) {
       if (specifier === 'react') return React;
       throw new Error('unexpected require: ' + specifier);

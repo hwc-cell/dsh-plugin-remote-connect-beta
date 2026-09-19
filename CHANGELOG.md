@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [0.1.0-beta.1] - 2026-09-19
 
-First public beta. Installed with `npm i dsh-plugin-remote-connect@beta` (the `latest` tag is left
+First public beta. Installed with `npm i dsh-plugin-remote-connect-beta@beta` (the `latest` tag is left
 untouched on purpose), or straight from the repository.
 
 ### Added

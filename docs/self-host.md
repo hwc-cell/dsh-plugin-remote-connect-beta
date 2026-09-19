@@ -37,7 +37,7 @@ Three properties make this safe to run on a machine that can execute commands:
 openssl rand -hex 16
 
 # a tunnel-only key pair (no shell access on the server)
-npx dsh-plugin-remote-connect keygen --out ~/.ssh/dsh_remote_tunnel
+npx dsh-plugin-remote-connect-beta keygen --out ~/.ssh/dsh_remote_tunnel
 ```
 
 `keygen` prints a ready-to-paste `authorized_keys` line that is restricted to one forward.
@@ -48,7 +48,7 @@ npx dsh-plugin-remote-connect keygen --out ~/.ssh/dsh_remote_tunnel
 
 ```bash
 # on your machine: render the installer (it prints by default, it never touches the server)
-npx dsh-plugin-remote-connect setup-server \
+npx dsh-plugin-remote-connect-beta setup-server \
   --domain dsh.example.com --ssh-user dshtunnel --remote-port 8788 \
   --out /tmp/dsh-server-setup.sh
 
@@ -75,7 +75,7 @@ Uninstall is the same script: `sudo bash /tmp/dsh-server-setup.sh uninstall`.
 
 ## 3. Server side: the manual path
 
-If you prefer your own layout, `npx dsh-plugin-remote-connect snippets --domain dsh.example.com`
+If you prefer your own layout, `npx dsh-plugin-remote-connect-beta snippets --domain dsh.example.com`
 prints the same content as text. The parts that actually matter:
 
 ```nginx
@@ -163,7 +163,7 @@ openssl x509 -in /etc/letsencrypt/live/<lineage>/fullchain.pem -noout -fingerpri
 The two SHA-256 values must match. Copy the on-disk one and pin it from the client side:
 
 ```bash
-npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
+npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
   --expect-cert-sha256 <sha256> --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
 ```
 
@@ -174,8 +174,8 @@ npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
 The edge password is the only door in front of your machine, so do not improvise it:
 
 ```bash
-npx dsh-plugin-remote-connect credential            # a typeable passphrase (~46 bit) + the exact commands
-npx dsh-plugin-remote-connect credential --random   # or a 24-character random one (~141 bit)
+npx dsh-plugin-remote-connect-beta credential            # a typeable passphrase (~46 bit) + the exact commands
+npx dsh-plugin-remote-connect-beta credential --random   # or a 24-character random one (~141 bit)
 ```
 
 It prints the password **once** (save it in your password manager) and the two ways to install
@@ -286,7 +286,7 @@ behaviour that looks like a plugin bug and is not.
 
 ```bash
 export DSH_REMOTE_KEY=$(openssl rand -hex 16)
-npx dsh-plugin-remote-connect serve --public --key "$DSH_REMOTE_KEY" \
+npx dsh-plugin-remote-connect-beta serve --public --key "$DSH_REMOTE_KEY" \
   --domain dsh.example.com --tunnel ssh \
   --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-key ~/.ssh/dsh_remote_tunnel --ssh-port 22022
 ```
@@ -296,8 +296,8 @@ Or keep it running as part of the Harness (recommended) — one row in
 
 ```yaml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan: { enabled: true, port: 8787 }
         public:
@@ -317,9 +317,9 @@ The panel then shows the entry URL (`https://dsh.example.com/?k=…`) and a QR c
 ## 8. Verify, then keep it verified
 
 ```bash
-npx dsh-plugin-remote-connect check  --domain dsh.example.com --user dsh --password '***' \
+npx dsh-plugin-remote-connect-beta check  --domain dsh.example.com --user dsh --password '***' \
   --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
-npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
+npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
   --expect-cert-sha256 <sha256> --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
 ```
 

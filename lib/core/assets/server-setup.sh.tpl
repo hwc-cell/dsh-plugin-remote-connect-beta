@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dsh-remote 服务器侧安装器（由 dsh-plugin-remote-connect 生成，勿手工编辑生成物）
+# dsh-remote 服务器侧安装器（由 dsh-plugin-remote-connect-beta 生成，勿手工编辑生成物）
 #
 #   sudo bash server-setup.sh probe                 # 只探测环境，不改任何东西
 #   sudo bash server-setup.sh install --dry-run     # 打印将要执行的动作

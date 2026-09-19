@@ -36,7 +36,7 @@
 openssl rand -hex 16
 
 # 只用于端口转发的密钥对（在服务器上没有 shell 权限）
-npx dsh-plugin-remote-connect keygen --out ~/.ssh/dsh_remote_tunnel
+npx dsh-plugin-remote-connect-beta keygen --out ~/.ssh/dsh_remote_tunnel
 ```
 
 `keygen` 会打印一行可直接粘贴的 `authorized_keys` 内容，已限制成只能做一条转发。
@@ -47,7 +47,7 @@ npx dsh-plugin-remote-connect keygen --out ~/.ssh/dsh_remote_tunnel
 
 ```bash
 # 本机渲染安装脚本（默认只打印，不碰服务器）
-npx dsh-plugin-remote-connect setup-server \
+npx dsh-plugin-remote-connect-beta setup-server \
   --domain dsh.example.com --ssh-user dshtunnel --remote-port 8788 \
   --out /tmp/dsh-server-setup.sh
 
@@ -73,7 +73,7 @@ ssh you@203.0.113.10 'sudo bash /tmp/dsh-server-setup.sh install'
 
 ## 3. 服务器侧：手工路线
 
-如果你更喜欢自己的目录组织，`npx dsh-plugin-remote-connect snippets --domain dsh.example.com`
+如果你更喜欢自己的目录组织，`npx dsh-plugin-remote-connect-beta snippets --domain dsh.example.com`
 会把同样的内容按文本打印出来。真正要紧的就这几处：
 
 ```nginx
@@ -159,7 +159,7 @@ openssl x509 -in /etc/letsencrypt/live/<lineage>/fullchain.pem -noout -fingerpri
 两个 SHA-256 必须一致。把磁盘那个指纹抄下来，从客户端侧钉住它：
 
 ```bash
-npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
+npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
   --expect-cert-sha256 <sha256> --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
 ```
 
@@ -170,8 +170,8 @@ npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
 这道边缘口令是你机器前面唯一的一道门，所以不要随手编：
 
 ```bash
-npx dsh-plugin-remote-connect credential            # 一句好输入的口令（约 46 bit）+ 现成的设置命令
-npx dsh-plugin-remote-connect credential --random   # 或 24 位纯随机串（约 141 bit）
+npx dsh-plugin-remote-connect-beta credential            # 一句好输入的口令（约 46 bit）+ 现成的设置命令
+npx dsh-plugin-remote-connect-beta credential --random   # 或 24 位纯随机串（约 141 bit）
 ```
 
 口令**只打印一次**（请立刻存进密码管理器），同时给出两种在服务器上设置它的方式。口令经 stdin 传入，
@@ -267,7 +267,7 @@ restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3
 
 ```bash
 export DSH_REMOTE_KEY=$(openssl rand -hex 16)
-npx dsh-plugin-remote-connect serve --public --key "$DSH_REMOTE_KEY" \
+npx dsh-plugin-remote-connect-beta serve --public --key "$DSH_REMOTE_KEY" \
   --domain dsh.example.com --tunnel ssh \
   --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-key ~/.ssh/dsh_remote_tunnel --ssh-port 22022
 ```
@@ -276,8 +276,8 @@ npx dsh-plugin-remote-connect serve --public --key "$DSH_REMOTE_KEY" \
 
 ```yaml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan: { enabled: true, port: 8787 }
         public:
@@ -297,9 +297,9 @@ npx dsh-plugin-remote-connect serve --public --key "$DSH_REMOTE_KEY" \
 ## 8. 验证，并且让它一直保持被验证
 
 ```bash
-npx dsh-plugin-remote-connect check  --domain dsh.example.com --user dsh --password '***' \
+npx dsh-plugin-remote-connect-beta check  --domain dsh.example.com --user dsh --password '***' \
   --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
-npx dsh-plugin-remote-connect doctor --domain dsh.example.com \
+npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
   --expect-cert-sha256 <sha256> --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-port 22022
 ```
 

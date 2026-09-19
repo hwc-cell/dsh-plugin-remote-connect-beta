@@ -7,7 +7,7 @@
 > 电脑前的人用。
 >
 > 如果对方只是想要自己的远程入口，最省事的答案是：**让他把本插件装在他自己的机器上**
-> （MIT，`npx dsh-plugin-remote-connect serve --public ...`）—— 这也是本项目的主要用途。下面的多租户
+> （MIT，`npx dsh-plugin-remote-connect-beta serve --public ...`）—— 这也是本项目的主要用途。下面的多租户
 > 是为「一台机器确实要给多个人用」（家庭服务器、共用工作站）准备的，默认关闭。
 
 一个 DSH Harness 实例**本身就是单用户的**：会话、凭据、设置、工作区、启动令牌全都在同一个
@@ -42,8 +42,8 @@
 ```yaml
 # profiles/web/cordis.patch.yml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan: { enabled: true, port: 8787 }
         tenants:
@@ -68,14 +68,14 @@ Helper）放进 `PATH`，而它会拒绝 `NODE_OPTIONS` —— 把 `harness.node
 
 ```bash
 # 只改注册表，不启动任何东西
-npx dsh-plugin-remote-connect tenant add --name "张三"      # 打印密钥 + 局域网链接 + 二维码
-npx dsh-plugin-remote-connect tenant list
-npx dsh-plugin-remote-connect tenant key    --id zhangsan
-npx dsh-plugin-remote-connect tenant rotate zhangsan        # 旧链接立刻失效
-npx dsh-plugin-remote-connect tenant rm     zhangsan        # 数据目录保留，不替你删
+npx dsh-plugin-remote-connect-beta tenant add --name "张三"      # 打印密钥 + 局域网链接 + 二维码
+npx dsh-plugin-remote-connect-beta tenant list
+npx dsh-plugin-remote-connect-beta tenant key    --id zhangsan
+npx dsh-plugin-remote-connect-beta tenant rotate zhangsan        # 旧链接立刻失效
+npx dsh-plugin-remote-connect-beta tenant rm     zhangsan        # 数据目录保留，不替你删
 
 # 在没有 DSH 界面的机器上：网关 + 实例都在这个进程里
-npx dsh-plugin-remote-connect serve --multi --port 8787
+npx dsh-plugin-remote-connect-beta serve --multi --port 8787
 ```
 
 `tenant` 只动注册表。Harness 实例归"跑网关的那个进程"所有 —— DSH 插件，或 `serve --multi`。

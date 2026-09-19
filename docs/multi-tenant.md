@@ -8,7 +8,7 @@
 > would let sit down at it.
 >
 > If someone just wants their own remote entry, the right answer is the cheap one: **they install
-> this plugin on their own machine** (MIT, `npx dsh-plugin-remote-connect serve --public ...`). That
+> this plugin on their own machine** (MIT, `npx dsh-plugin-remote-connect-beta serve --public ...`). That
 > is what this project is built for; the multi-tenant layer below exists for the case where one
 > machine really does serve several people (a home lab, a shared workstation, a family box), and it
 > is off by default.
@@ -48,8 +48,8 @@ answered with `404`, and **one tenant's launch token against the other tenant's 
 ```yaml
 # profiles/web/cordis.patch.yml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan: { enabled: true, port: 8787 }
         tenants:
@@ -76,14 +76,14 @@ entry point if auto-detection picks the wrong one.
 
 ```bash
 # registry editing (does NOT start anything)
-npx dsh-plugin-remote-connect tenant add --name "Alice"      # prints the key + LAN link + QR
-npx dsh-plugin-remote-connect tenant list
-npx dsh-plugin-remote-connect tenant key    --id alice
-npx dsh-plugin-remote-connect tenant rotate alice            # old links die immediately
-npx dsh-plugin-remote-connect tenant rm     alice            # data directory is left in place
+npx dsh-plugin-remote-connect-beta tenant add --name "Alice"      # prints the key + LAN link + QR
+npx dsh-plugin-remote-connect-beta tenant list
+npx dsh-plugin-remote-connect-beta tenant key    --id alice
+npx dsh-plugin-remote-connect-beta tenant rotate alice            # old links die immediately
+npx dsh-plugin-remote-connect-beta tenant rm     alice            # data directory is left in place
 
 # run the gateway + the instances in this process (for machines without a DSH UI)
-npx dsh-plugin-remote-connect serve --multi --port 8787
+npx dsh-plugin-remote-connect-beta serve --multi --port 8787
 ```
 
 `tenant` only edits the registry. The Harness instances belong to whichever process runs the

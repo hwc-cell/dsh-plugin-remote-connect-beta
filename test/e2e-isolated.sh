@@ -50,11 +50,11 @@ done
 
 # 1) 隔离 profile：把本仓库当作依赖链进去 + 写 patch
 mkdir -p "$HOME_DIR/profiles/web/node_modules" "$HOME_DIR/cache"
-ln -sfn "$REPO" "$HOME_DIR/profiles/web/node_modules/dsh-plugin-remote-connect"
+ln -sfn "$REPO" "$HOME_DIR/profiles/web/node_modules/dsh-plugin-remote-connect-beta"
 cat > "$HOME_DIR/profiles/web/cordis.patch.yml" <<YAML
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan:
           enabled: true
@@ -116,7 +116,7 @@ else
 fi
 
 # 5) client 半：进入 boot 图
-if curl -s -b "$JAR" "http://127.0.0.1:$PORT/" | grep -q 'dsh-plugin-remote-connect'; then
+if curl -s -b "$JAR" "http://127.0.0.1:$PORT/" | grep -q 'dsh-plugin-remote-connect-beta'; then
   ok "client 半已进入 boot 图"
 else
   bad "client 半不在 boot 图里"

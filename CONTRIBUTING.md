@@ -31,7 +31,7 @@ npm run preview # 真浏览器预览客户端半：http://127.0.0.1:8899/
 
 ## 发布前检查清单（fork 后第一次发布必须做）
 
-- [ ] `package.json` 的 `name` 换成你自己的 scope（`@you/dsh-plugin-remote-connect`），或确认无 scope 名未被占用
+- [ ] `package.json` 的 `name` 换成你自己的 scope（`@you/dsh-plugin-remote-connect-beta`），或确认无 scope 名未被占用
 - [ ] 补 `repository` / `homepage` / `bugs` / `author` 字段（本仓库刻意留空，避免把占位地址发上 npm）
 - [ ] `LICENSE` 的版权行换成你的名字或组织
 - [ ] `SECURITY.md` 里换成你的漏洞披露渠道

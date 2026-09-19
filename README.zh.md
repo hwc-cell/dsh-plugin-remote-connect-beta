@@ -1,4 +1,4 @@
-# dsh-plugin-remote-connect
+# dsh-plugin-remote-connect-beta
 
 [English](README.md) | 中文
 
@@ -18,7 +18,7 @@
 ## 谁在什么机器上跑
 
 这个插件是给**想开远程入口的人、装在他自己机器上**用的。它刻意做成 MIT、零依赖：
-`npx dsh-plugin-remote-connect serve` 就是全部上手成本，全程不经过任何中转服务，也不需要注册账号。
+`npx dsh-plugin-remote-connect-beta serve` 就是全部上手成本，全程不经过任何中转服务，也不需要注册账号。
 
 有一件事必须说白：**Harness 跑在装它的那台机器上，而它能在那里执行命令。** 所以「把入口给出去」
 等于「把那台电脑的一部分交出去」。第二个人想用，推荐答案是「装到他自己机器上」，不是「用我的」。
@@ -87,7 +87,7 @@ DSH 按 `ctx.baseUrl`（profile 目录）解析插件包名，所以装在 profi
 #   ~/Library/Application Support/dsh-desktop/harness/profiles/web
 # 其它安装方式： ${DSH_HOME:-$HOME/.dsh}/profiles/web
 cd "$HOME/Library/Application Support/dsh-desktop/harness/profiles/web"
-npm install dsh-plugin-remote-connect
+npm install dsh-plugin-remote-connect-beta
 ```
 
 ### 2. 在同一个目录的 `cordis.patch.yml` 里加一行
@@ -96,8 +96,8 @@ npm install dsh-plugin-remote-connect
 
 ```yaml
 - insert:
-    - id: dsh-plugin-remote-connect
-      name: dsh-plugin-remote-connect
+    - id: dsh-plugin-remote-connect-beta
+      name: dsh-plugin-remote-connect-beta
       config:
         lan:
           enabled: true          # 载入即开局域网入口
@@ -134,10 +134,10 @@ npm install dsh-plugin-remote-connect
 ## 安装（只用 CLI，不需要 DSH）
 
 ```bash
-npx dsh-plugin-remote-connect serve                    # 局域网，一条命令，终端会打印二维码
-npx dsh-plugin-remote-connect keygen                   # 生成隧道密钥 + 服务器要贴的受限行
-npx dsh-plugin-remote-connect snippets --domain dsh.example.com --kind nginx
-npx dsh-plugin-remote-connect check --domain dsh.example.com --user dsh --password '***' \
+npx dsh-plugin-remote-connect-beta serve                    # 局域网，一条命令，终端会打印二维码
+npx dsh-plugin-remote-connect-beta keygen                   # 生成隧道密钥 + 服务器要贴的受限行
+npx dsh-plugin-remote-connect-beta snippets --domain dsh.example.com --kind nginx
+npx dsh-plugin-remote-connect-beta check --domain dsh.example.com --user dsh --password '***' \
     --ssh-user dshtunnel --ssh-host dsh.example.com --ssh-key ~/.ssh/dsh_remote_tunnel
 ```
 
@@ -285,7 +285,7 @@ client 半的 `__ModuleLoader__.load` 协议、槽位注册、store 与 fetch �
 | 隔离 Harness 就绪 | ✔ 打印 `dsh web:` 与令牌 |
 | host 半 API 可用 | ✔ `/remote-connect/api/state` 返回 `ok:true` |
 | 插件自动开启局域网入口 | ✔ 监听 `*:8891`，状态里带正确 URL |
-| client 半进入 boot 图 | ✔ 首页 `__DSH_BOOT__` 含 `dsh-plugin-remote-connect` |
+| client 半进入 boot 图 | ✔ 首页 `__DSH_BOOT__` 含 `dsh-plugin-remote-connect-beta` |
 | 局域网入口令牌交换 | ✔ `http://<lan-ip>:8891/` → `303` |
 
 真浏览器里也确认过：侧栏「设置」上方出现「远程连接」（带运行状态点），点开面板显示两种通道、地址、二维码与隧道状态。
