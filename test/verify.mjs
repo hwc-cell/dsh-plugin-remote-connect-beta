@@ -356,6 +356,7 @@ const canned = {
     qr: ['1111111', '1000001', '1011101', '1011101', '1011101', '1000001', '1111111'],
     error: null,
   },
+  [API + '/access-key/rotate']: { ok: true, accessKey: 'brand-new-key-0123456789', entry: 'https://dsh.example.com/?k=brand-new-key-0123456789', epoch: 2 },
   [API + '/tenants/add']: {
     ok: true,
     tenant: { id: 'carol', name: 'Carol', accessKey: 'key-carol-0123456789', port: 58583, phase: 'starting', running: false },
@@ -481,6 +482,48 @@ check(
   checkPanel.includes('dshRcCheckMark') && checkPanel.includes('dshRcCheckDetail') && checkPanel.includes('：') === false,
 )
 clientExports.internals.setState({ checkResults: null })
+
+// 访问口令面板：显示 / 生成新的 / 自定义
+check(
+  'client: 面板有「访问口令」一行（显示 + 生成新的 + 自定义输入）',
+  (() => {
+    clientExports.internals.setState({
+      data: {
+        ok: true, busy: false, canControl: true,
+        config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+        lan: { running: true, url: 'http://192.0.2.10:8787/' },
+        public: {
+          running: true, domain: 'dsh.example.com', port: 8788,
+          entry: 'https://dsh.example.com/?k=demo-key-0123456789',
+          accessKeyMasked: 'de••••••89', tunnel: null,
+        },
+        qr: null, error: null,
+      },
+    })
+    const html = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+    return (
+      html.includes('«key.label»') &&
+      html.includes('«key.reveal»') &&
+      html.includes('«key.rotate»') &&
+      html.includes('«key.setCustom»') &&
+      html.includes('«key.customPlaceholder»') &&
+      html.includes('de••••••89') ||
+      (console.log('   面板缺失：', ['key.label','key.reveal','key.rotate','key.setCustom','key.customPlaceholder','de••••••89'].filter((k) => !html.includes(k === 'de••••••89' ? k : '«' + k + '»')).join(', ')), false)
+    )
+  })(),
+)
+await clientExports.internals.setCustomKey()
+check(
+  'client: 自定义口令走 POST /access-key/rotate（空输入不发请求）',
+  calls.some((item) => item.pathname === API + '/access-key/rotate' && item.method === 'POST') === false,
+)
+clientExports.internals.setState({ keyDraft: 'ginger-grove-ember-amber-apple-arrow-923' })
+await clientExports.internals.setCustomKey()
+check(
+  'client: 填了口令后发出轮换请求并清空输入框',
+  calls.some((item) => item.pathname === API + '/access-key/rotate' && item.method === 'POST') &&
+    clientExports.internals.store.keyDraft === '',
+)
 
 // ── 多租户面板：租户卡片、动作与二维码 ──
 clientExports.internals.setState({
