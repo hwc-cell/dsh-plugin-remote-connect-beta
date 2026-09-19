@@ -1394,5 +1394,55 @@ check(
     cliCredZh.stdout.includes('别把口令写进 URL'),
 )
 
+// ──────────────────── 隧道占用 vs permitlisten（用户实测踩过的误报） ────────────────────
+
+const preflightProbe = await import(pathToFileURL(path.join(root, 'lib/core/preflight.js')).href)
+check(
+  'preflight: 能从 pgrep 输出里认出"本机已有的隧道"（并忽略自己）',
+  (() => {
+    const runner = async () => ({
+      stdout: '12345 ssh -N -T -p 22022 -i ~/.ssh/k -R 127.0.0.1:8788:127.0.0.1:8788 dshtunnel@host\n',
+    })
+    return preflightProbe.findExistingTunnel
+  })() instanceof Function,
+)
+const detected = await preflightProbe.findExistingTunnel(8788, async () => ({
+  stdout:
+    '111 pgrep -fl ssh .*-R 127.0.0.1:8788\n' +
+    '222 ssh -N -T -p 22022 -i ~/.ssh/k -R 127.0.0.1:8788:127.0.0.1:8788 dshtunnel@dsh.example.com\n',
+}))
+check(
+  'preflight: 占用检测拿到的是真隧道那条（不是 pgrep 自己），并带上 pid',
+  detected !== null && detected.pid === '222' && detected.command.includes('dshtunnel@dsh.example.com'),
+  JSON.stringify(detected),
+)
+check(
+  'preflight: 没有隧道时返回 null（不会瞎报）',
+  (await preflightProbe.findExistingTunnel(8788, async () => ({ stdout: '' }))) === null,
+)
+const occupied = await preflightProbe.checkSshTunnel({
+  user: 'dshtunnel',
+  host: 'dsh.example.com',
+  remotePort: 8788,
+  detectTunnel: async () => ({ pid: '222', command: 'ssh … -R 127.0.0.1:8788:…' }),
+})
+check(
+  'preflight: 远端口已被自己的隧道占用时，结论是"通的"而不是"服务器拒绝"',
+  occupied.ok === true && occupied.code === 'preflight.tunnel.existing' && occupied.params.pid === '222',
+  JSON.stringify(occupied),
+)
+const occupiedRendered = preflightProbe.renderCheck(occupied, 'tunnel', messages.translator('zh'))
+check(
+  'preflight: 占用时的中文说明指向"正在服务的那条隧道"，不再误导去查 permitlisten',
+  occupiedRendered.detail.includes('已被本机的一条隧道占用') && !occupiedRendered.detail.includes('permitlisten'),
+  occupiedRendered.detail,
+)
+const listenHint = messages.translate('zh', 'preflight.tunnel.notKept.hint.listen', { remotePort: '8788' })
+check(
+  'preflight: 真的失败时，提示先怀疑占用、再怀疑 permitlisten',
+  listenHint.indexOf('已有隧道占着') < listenHint.indexOf('permitlisten'),
+  listenHint.slice(0, 60),
+)
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)
