@@ -192,6 +192,26 @@ else
   bad "多租户：无效密钥未被拒绝"
 fi
 
+# 浏览器视角：首页重定向不能成环（这条修过一次回归：303 → / → 再注入 → 303 无限循环）
+JAR_LOOP="$HOME_DIR/jar-loop.txt"
+LOOP_CODE="$(curl -s -L --max-redirs 8 -c "$JAR_LOOP" -b "$JAR_LOOP" -o /dev/null -w '%{http_code}' "$GATE/?k=$KEY_A" || true)"
+LOOP_AGAIN="$(curl -s -L --max-redirs 8 -c "$JAR_LOOP" -b "$JAR_LOOP" -o /dev/null -w '%{http_code}' "$GATE/" || true)"
+if [ "$LOOP_CODE" = "200" ] && [ "$LOOP_AGAIN" = "200" ]; then
+  ok "浏览器路径：首次换密钥后跟到 200，再访问也是 200（重定向不成环）"
+else
+  bad "浏览器路径异常：首次=${LOOP_CODE} 再次=${LOOP_AGAIN} （期望都是 200，303 循环=死循环回归）"
+fi
+# 真实浏览器场景：先换到网关 Cookie，再让浏览器带着一个"上一代 Harness 的失效 Cookie"
+JAR_STALE="$HOME_DIR/jar-stale.txt"
+curl -s -c "$JAR_STALE" -o /dev/null "$GATE/?k=$KEY_A"
+printf '%s\tFALSE\t/\tFALSE\t0\tdsh-auth-old\tstale\n' "$LAN_IP" >> "$JAR_STALE"
+STALE_CODE="$(curl -s -L --max-redirs 8 -b "$JAR_STALE" -c "$JAR_STALE" -o /dev/null -w '%{http_code}' "$GATE/" || true)"
+if [ "$STALE_CODE" = "200" ]; then
+  ok "浏览器路径：带失效 Cookie 也能自愈到 200（不再永远"暂无会话"）"
+else
+  bad "失效 Cookie 场景返回 ${STALE_CODE} （期望 200）"
+fi
+
 # 隔离的硬证据：拿 A 实例的令牌去打 B 实例的端口，必须 401
 TOK_A="$(grep -o "http://127.0.0.1:[0-9]*/?token=[A-Za-z0-9_-]*" "$HOME_DIR/homes/alice/instance.log" 2>/dev/null | tail -1 | sed 's/.*token=//')"
 if [ -z "$TOK_A" ]; then TOK_A="unknown"; fi

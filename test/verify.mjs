@@ -1224,20 +1224,28 @@ upstreamA.stub.close()
 upstreamB.stub.close()
 fs.rmSync(tenantDir, { recursive: true, force: true })
 
-// ──────────────────── 令牌注入的两个真实坑（回归） ────────────────────
-// 坑 1：浏览器留着上一次 Harness 的 dsh-auth-* Cookie 时旧逻辑不再注入令牌，
-//       而 Harness 重启后那个 Cookie 已失效 → 页面能开但"暂无会话"，刷新也没用。
-// 坑 2：插件缓存的启动令牌在 Harness 重启后过期 → 注入过期令牌 → 上游 401。
+// ──────────────────── 首页令牌注入：三个方向相反的坑（回归） ────────────────────
+// 坑 1（死循环 · 用户实测）：Harness 对 `/?token=…` 一律回 303 → `/`。若对每个首页
+//       请求都注入令牌，浏览器就在 303 之间无限打转（"不能正确地重定向"）。
+// 坑 2（永远"暂无会话"）：浏览器留着上一次 Harness 的 dsh-auth-* Cookie 时如果不注入
+//       令牌，而那个 Cookie 已失效，页面能开但会话列表永远为空。
+// 坑 3（令牌过期）：插件缓存的启动令牌在 Harness 重启后失效 → 注入后 401。
+// 正确规则：没 Cookie 才注入；带 token 的请求原样转发；失效 Cookie 用一次令牌重定向补回来。
 
-let upstreamToken = 'token-one-aaaaaaaaaaaa'   // 上游当前认可的令牌
-let rejectTokenOne = false                     // 翻转后：旧令牌一律 401
+let upstreamToken = 'token-one-aaaaaaaaaaaa'
+let rejectTokenOne = false
 const seenByUpstream = []
 const flakyUpstream = http.createServer((req, res) => {
   seenByUpstream.push(req.url)
-  const stale = rejectTokenOne && req.url.includes('token=token-one-aaaaaaaaaaaa')
-  if (stale) {
+  if (rejectTokenOne && req.url.includes('token=token-one-aaaaaaaaaaaa')) {
     res.writeHead(401, { 'content-type': 'text/plain' })
     res.end('unauthorized')
+    return
+  }
+  // 模拟 Harness：带 token 的首页 → 303 回 /；否则 200
+  if (req.url.includes('token=')) {
+    res.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-ok=1; Path=/' })
+    res.end()
     return
   }
   res.writeHead(200, { 'content-type': 'text/html' })
@@ -1250,29 +1258,72 @@ const writeFixture = (token) =>
 writeFixture(upstreamToken)
 const injectProxy = createProxy({ port: 0, listenHost: '127.0.0.1', upstreamPort: flakyPort, logPaths: [injectLog] })
 const injectInfo = await injectProxy.start()
-const stale = { cookie: 'dsh-auth-old=definitely-stale' }
+const gate = (headers) => rawRequest(HOST + String(injectInfo.port) + '/', { headers: headers ?? {} })
 
-const first = await rawRequest(HOST + String(injectInfo.port) + '/', { headers: stale })
+const firstVisit = await gate()
 check(
-  'proxy: 带着旧 dsh-auth Cookie 访问首页时仍注入令牌（否则永远"暂无会话"）',
-  first.status === 200 && seenByUpstream.some((url) => url.includes('token=token-one-aaaaaaaaaaaa')),
-  '上游收到：' + seenByUpstream.join(' | ').slice(0, 100),
+  'proxy: 首次访问（无 Cookie）注入令牌，Harness 回 303 换 Cookie',
+  firstVisit.status === 303 &&
+    firstVisit.headers.location === '/' &&
+    seenByUpstream[0] === '/?token=token-one-aaaaaaaaaaaa',
+  '上游第一条：' + String(seenByUpstream[0]),
 )
 
-// Harness 重启：日志里换成新令牌，旧令牌立刻失效
-upstreamToken = 'token-two-bbbbbbbbbbbb'
-writeFixture(upstreamToken)
-rejectTokenOne = true
-const retried = await rawRequest(HOST + String(injectInfo.port) + '/', { headers: stale })
+seenByUpstream.length = 0
+const withCookie = await gate({ cookie: 'dsh-auth-ok=1' })
 check(
-  'proxy: 注入的令牌过期（上游 401）时重新发现并重试，最终 200',
-  retried.status === 200 && seenByUpstream.some((url) => url.includes('token=token-two-bbbbbbbbbbbb')),
-  '上游收到：' + seenByUpstream.join(' | ').slice(0, 140),
+  'proxy: 带 Cookie 访问首页不再注入令牌（否则 303 死循环）',
+  withCookie.status === 200 && seenByUpstream[0] === '/',
+  '上游收到：' + String(seenByUpstream[0]),
+)
+
+seenByUpstream.length = 0
+const withTokenParam = await gate({ cookie: 'dsh-auth-ok=1' })
+check('proxy: 已经带 token 的请求不重复处理', withTokenParam.status === 200 && seenByUpstream[0] === '/')
+
+// 失效 Cookie 的真实场景：上游对"带旧 Cookie 的首页"回 401 → 插件应回 303 到 /?token=…
+rejectTokenOne = false
+const staleUpstream = http.createServer((req, res) => {
+  seenByUpstream.push(req.url)
+  if (req.url.includes('token=')) {
+    res.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-ok=1; Path=/' })
+    res.end()
+    return
+  }
+  if (String(req.headers.cookie ?? '').includes('stale')) {
+    res.writeHead(401, { 'content-type': 'text/plain' })
+    res.end('unauthorized')
+    return
+  }
+  res.writeHead(200, { 'content-type': 'text/html' })
+  res.end('<!doctype html><title>ok</title><body>ok</body>')
+})
+const stalePort = await listen(staleUpstream)
+// 每个代理只认"端口与自己上游一致"的日志行，所以这里单独写一份 fixture
+const healLog = path.join(root, 'test', '.inject-heal-fixture.log')
+fs.writeFileSync(healLog, 'dsh web: http://127.0.0.1:' + String(stalePort) + '/?token=token-three-cccccccccccc\n')
+const healProxy = createProxy({ port: 0, listenHost: '127.0.0.1', upstreamPort: stalePort, logPaths: [healLog] })
+const healInfo = await healProxy.start()
+const heal = await rawRequest(HOST + String(healInfo.port) + '/', { headers: { cookie: 'dsh-auth-old=stale' } })
+check(
+  'proxy: 失效 Cookie → 303 到 /?token=…（浏览器一次就能自愈，且不会打转）',
+  heal.status === 303 && String(heal.headers.location).startsWith('/?token='),
+  'HTTP ' + String(heal.status) + ' → ' + String(heal.headers.location).slice(0, 40),
+)
+seenByUpstream.length = 0
+const follow = await rawRequest(HOST + String(healInfo.port) + '/?token=' + encodeURIComponent(String(heal.headers.location).split('token=')[1]))
+check(
+  'proxy: 跟随那次重定向会被原样转发（不再叠加重定向 → 不会成环）',
+  follow.status === 303 && follow.headers.location === '/',
+  'HTTP ' + String(follow.status),
 )
 
 await injectProxy.stop()
+await healProxy.stop()
 flakyUpstream.close()
+staleUpstream.close()
 fs.rmSync(injectLog, { force: true })
+fs.rmSync(healLog, { force: true })
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)
