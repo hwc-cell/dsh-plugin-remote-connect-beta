@@ -1616,5 +1616,62 @@ check(
 await providerProxy.stop()
 providerUpstream.close()
 
+// ──────────────────── 自助改口令：轮换即时生效、旧 Cookie 作废、弱口令被拒 ────────────────────
+
+const hostTools2 = await import(pathToFileURL(path.join(root, 'lib/index.js')).href)
+check(
+  'key: 强度校验会拒绝弱口令并说明原因，接受词表短句',
+  hostTools2.checkAccessKeyStrength('123456').length >= 2 &&
+    hostTools2.checkAccessKeyStrength('password').some((item) => item.includes('弱口令')) &&
+    hostTools2.checkAccessKeyStrength('short').some((item) => item.includes('至少 12 位')) &&
+    hostTools2.checkAccessKeyStrength('ginger-grove-ember-amber-apple-arrow-923').length === 0,
+)
+const keyStateFile = path.join(root, 'test', '.access-key-fixture.json')
+fs.rmSync(keyStateFile, { force: true })
+const seeded = hostTools2.loadAccessKeyState(keyStateFile, '')
+check(
+  'key: 首次运行自动生成一把可手输的口令（用户不需要自己想）',
+  seeded.accessKey.split('-').length === 7 && seeded.generated === true && seeded.epoch === 0,
+  seeded.accessKey.split('-').slice(0, 3).join('-') + '…',
+)
+hostTools2.saveAccessKeyState(keyStateFile, { accessKey: seeded.accessKey, epoch: 3, updatedAt: 'x' })
+const reloaded = hostTools2.loadAccessKeyState(keyStateFile, 'ignored-seed')
+check(
+  'key: 已落盘的口令优先于组合里的种子（面板轮换不需要改用户的 yml）',
+  reloaded.accessKey === seeded.accessKey && reloaded.epoch === 3,
+)
+fs.rmSync(keyStateFile, { force: true })
+
+// 运行中的代理必须立刻认新密钥、并且旧 Cookie 失效
+let liveKey = 'first-key-0123456789'
+let liveEpoch = 0
+const rotateProxy = createProxy({
+  port: 0,
+  listenHost: '127.0.0.1',
+  upstreamPort: upstreamA.stubPort,
+  accessKey: liveKey,
+  accessKeyProvider: () => liveKey,
+  keyEpochProvider: () => liveEpoch,
+})
+const rotateInfo = await rotateProxy.start()
+const beforeRotate = await rawRequest(HOST + String(rotateInfo.port) + '/?k=' + liveKey)
+const cookieBefore = String([].concat(beforeRotate.headers['set-cookie'] ?? [])[0] ?? '')
+check('key: 旧口令可换到 Cookie', beforeRotate.status === 303 && cookieBefore.includes('='))
+liveKey = 'second-key-9876543210'
+liveEpoch = 1
+check(
+  'key: 轮换后新口令立刻生效（无需重启代理）',
+  (await rawRequest(HOST + String(rotateInfo.port) + '/?k=' + liveKey)).status === 303,
+)
+check(
+  'key: 轮换后旧口令立刻 404',
+  (await rawRequest(HOST + String(rotateInfo.port) + '/?k=first-key-0123456789')).status === 404,
+)
+check(
+  'key: 轮换后旧 Cookie 立刻失效（代次对不上）',
+  (await rawRequest(HOST + String(rotateInfo.port) + '/', { headers: { cookie: cookieBefore.split(';')[0] } })).status === 404,
+)
+await rotateProxy.stop()
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

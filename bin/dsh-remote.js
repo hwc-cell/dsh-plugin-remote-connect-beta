@@ -355,6 +355,18 @@ function commandSetupServer(flags) {
   } catch (error) {
     fail(String(error && error.message ? error.message : error))
   }
+  // 边缘口令：默认由插件生成一次并打印（用户自己想的 90% 是弱口令），
+  // 口令不写进脚本；用 `printf %s '<口令>' | bash <脚本> install --auth-password-stdin` 应用。
+  if (flags.uninstall !== true) {
+    const edge = generatePassphrase()
+    process.stderr.write(
+      t('cli.setup.edgePassword', { user: typeof flags['auth-user'] === 'string' ? flags['auth-user'] : 'dsh' }) +
+        '\n  ' + edge.password + '\n' +
+        t('cli.setup.edgeApply', { bits: String(edge.bits) }) + '\n' +
+        '  printf %s ' + JSON.stringify(edge.password) + ' | sudo bash <脚本> install --auth-password-stdin\n' +
+        t('cli.setup.edgeNote') + '\n\n',
+    )
+  }
   const out = typeof flags.out === 'string' ? flags.out : null
   if (out === null) {
     process.stdout.write(text)
