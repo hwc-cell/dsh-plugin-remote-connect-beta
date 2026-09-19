@@ -814,5 +814,47 @@ check(
   cliEnNotice.stderr.trim().split('\n')[0],
 )
 
+// ──────────────────── 文档相对链接（避免 npm 页面/仓库里的死链） ────────────────────
+
+const mdFiles = [
+  'README.md',
+  'README.zh.md',
+  'CHANGELOG.md',
+  'CONTRIBUTING.md',
+  'SECURITY.md',
+  'docs/self-host.md',
+  'docs/self-host.zh.md',
+  'docs/market-submission.md',
+]
+const brokenLinks = []
+for (const file of mdFiles) {
+  const text = fs.readFileSync(path.join(root, file), 'utf8')
+  for (const match of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+    const target = match[1]
+    if (/^(https?:|mailto:|#)/.test(target)) continue
+    const clean = target.split('#')[0]
+    if (clean === '') continue
+    if (!fs.existsSync(path.join(root, path.dirname(file), clean))) brokenLinks.push(file + ' → ' + target)
+  }
+}
+check(
+  'docs: 所有相对链接都能解析',
+  brokenLinks.length === 0,
+  brokenLinks.length === 0 ? String(mdFiles.length) + ' 个文件' : brokenLinks.join(', '),
+)
+// README 链到的文件必须在发布包里（npm 页面上不会 404）
+const published = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).files
+const readmeLinks = [...fs.readFileSync(path.join(root, 'README.md'), 'utf8').matchAll(/\]\(((?:docs|lib|bin)\/[^)\s#]+)/g)].map(
+  (match) => match[1],
+)
+const notShipped = readmeLinks.filter(
+  (link) => !published.some((entry) => entry === link || (entry.endsWith('/') === false && link.startsWith(entry + '/')) || entry === link),
+)
+check(
+  'docs: README 里链到的仓库文件都在 package.json files 里',
+  notShipped.length === 0,
+  notShipped.length === 0 ? readmeLinks.join(', ') : '缺：' + notShipped.join(', '),
+)
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

@@ -22,7 +22,7 @@ Two ways to use it, one shared core:
 | `lan` | **0 items** | Phone/computer on the same Wi-Fi | No external dependency ✅ |
 | `cloudflare` | **0 items** (install `cloudflared`, authorize; brings its own certificate, Cloudflare Access available) | Most people | ⚠️ unstable |
 | `tailscale` | **0 items** (`tailscale funnel`; brings its own certificate and domain) | People who prefer not to use Cloudflare | ⚠️ unstable |
-| `selfhost` | **6 items**: DNS / certificate / nginx reverse proxy / edge password / dedicated ssh account / self-test | People with a VPS and their own domain who want full control | ✅ recommended for mainland users |
+| `selfhost` | **6 items**: DNS / certificate / nginx reverse proxy / edge password / dedicated ssh account / self-test — step-by-step guide: [`docs/self-host.md`](docs/self-host.md) | People with a VPS and their own domain who want full control | ✅ recommended for mainland users |
 
 > Hosted tunnels are **unreliable from mainland China**, so `selfhost` is a first-class backend rather than a patch: for those users, "own VPS + own domain" is usually a hard requirement.
 
@@ -40,7 +40,7 @@ Two ways to use it, one shared core:
 | Token acquisition (no log scraping) | ✅ official `connection.authenticatedUrl()`, resolved lazily; the log fallback accepts **only a start line whose port matches this process** |
 | Credentials never persisted | ✅ `?k=` never reaches logs (the generated template redacts by default); no secrets in the repository |
 | Config validation | ✅ exports `Config` as a zero-dependency Standard Schema: out-of-range ports, malformed domains, unknown `tunnel` values fail **before activation** |
-| Bilingual panel | ✅ zh/en dictionaries (22 keys each) with `locale` as a soft dependency |
+| Bilingual panel | ✅ zh/en dictionaries (29 keys each) with `locale` as a soft dependency |
 | Bilingual host-side text | ✅ one catalog (`lib/core/messages.js`, 87 keys per language) renders preflight results, tunnel state and panel API errors in the language the panel asks for (`?locale=`); `doctor`/`setup-server`/`keygen` detail output is still Chinese-only and prints an English notice (see CHANGELOG) |
 | Certificate "is it actually served?" | ✅ two paths: the installer compares served vs on-disk live, and prints `--expect-cert-sha256` for `doctor` to verify from outside |
 

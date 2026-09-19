@@ -33,7 +33,11 @@
     "SECURITY.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/self-host.md",
+    "docs/self-host.zh.md",
+    "docs/client-preview.png",
+    "docs/market-submission.md"
   ],
   "engines": {
     "node": ">=18"

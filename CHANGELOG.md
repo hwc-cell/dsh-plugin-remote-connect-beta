@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - `doctor` reports the tailscale funnel check when the configured tunnel mode is `tailscale`.
 - CI workflow (Node 20/22: gate → tests → pack-content check), `CONTRIBUTING.md`, Homebrew formula template and `docs/market-submission.md`.
 
+### Documentation
+
+- `docs/self-host.md` + `docs/self-host.zh.md`: the long-form guide to the `selfhost` backend — link shape, scripted vs manual server setup, TLS with served-vs-on-disk fingerprint verification, the restricted tunnel account, DNS with multiple views, client configuration, verification commands and a troubleshooting table.
+- `package.json` now ships `docs/` (the guides and the preview image) so every README link resolves in the published tarball; CI checks those files are present in the pack.
+
 ### Changed
 
 - `npm run gate` also rejects hardcoded private LAN addresses (`192.168.x.x` / `10.x.x.x` literals); `192.168.x.x`-style placeholders still pass.
@@ -33,7 +38,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **`cloudflare` tunnel mode** (`serve --tunnel cloudflared`) for users without a server.
 - **`doctor`**: upstream and token provenance, proxy self-test, DNS / certificate / edge password / ssh tunnel checks, the certificate actually served, `--expect-cert-sha256` cross-machine comparison, and the checks only the server can run.
 - **DSH plugin halves**: host half (`lib/index.js`) with panel routes and in-process proxy/tunnel lifecycle; client half (`lib/client.js`) as a hand-written bundle with no build step.
-- **Bilingual panel**: zh/en dictionaries (22 keys each) with `locale` as a soft dependency.
+- **Bilingual panel**: zh/en dictionaries with `locale` as a soft dependency (29 keys each as of the host-catalog change).
 - **Zero-dependency `Config`**: a Standard Schema validator so malformed configuration fails before activation without adding a dependency.
 
 ### Security

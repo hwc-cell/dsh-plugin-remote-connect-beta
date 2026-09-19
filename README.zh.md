@@ -22,7 +22,7 @@
 | `lan` | **0 项** | 同一 Wi-Fi 下的手机/电脑 | 无外部依赖 ✅ |
 | `cloudflare` | **0 项**（装 `cloudflared` + 登录授权，自带证书，可用 Access 做鉴权） | 大多数人 | ⚠️ 不稳定 |
 | `tailscale` | **0 项**（`tailscale funnel`，自带证书与域名） | 不想用 Cloudflare 的人 | ⚠️ 不稳定 |
-| `selfhost` | **6 项**：DNS / 证书 / nginx 反代 / 边缘口令 / 专用 ssh 账号 / 自测 | 有 VPS 与自有域名、要完全自主可控 | ✅ 推荐给大陆用户 |
+| `selfhost` | 详见 [`docs/self-host.zh.md`](docs/self-host.zh.md)；**6 项**：DNS / 证书 / nginx 反代 / 边缘口令 / 专用 ssh 账号 / 自测 | 有 VPS 与自有域名、要完全自主可控 | ✅ 推荐给大陆用户 |
 
 > 托管隧道（cloudflare / tailscale）在**中国大陆可达性不稳定**，所以 `selfhost` 是一等公民而不是补丁：
 > 对大陆用户"自备 VPS + 自有域名"往往是刚需。
@@ -41,7 +41,7 @@
 | 令牌获取（不抓日志） | ✅ 优先官方 `connection.authenticatedUrl()`（惰性等它挂载）；日志兜底**只认端口一致的启动行**，避免拿到别的进程的令牌 |
 | 凭据零落盘 | ✅ `?k=` 不进日志（模板默认脱敏）；仓库内无任何密钥 |
 | 配置校验 | ✅ 导出 `Config`（零依赖 Standard Schema）：端口越界/域名非法/tunnel 取值未知在**装载前**就报错；不引 `schemastery`，因为 profile 目录解析不到它 |
-| 面板双语 | ✅ zh/en 各 22 键 + `locale` 软依赖（缺 locale 时用 key 兜底）；槽位注册带命名空间 |
+| 面板双语 | ✅ zh/en 各 29 键 + `locale` 软依赖（缺 locale 时用 key 兜底）；槽位注册带命名空间 |
 | 证书"线上生效性" | ✅ 两条路：安装脚本 `verify_live_cert` 现场比对 + 打印 `--expect-cert-sha256`，`doctor` 从外部核对线上发的是不是服务器上那张 |
 
 ---

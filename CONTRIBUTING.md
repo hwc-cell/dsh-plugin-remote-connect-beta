@@ -26,7 +26,7 @@ npm run preview # 真浏览器预览客户端半：http://127.0.0.1:8899/
 - **文案归属**：面板自己的界面文案在 `lib/client.js` 的 zh/en 字典里（组件只通过 `t()` 取词，不写字面量）；**宿主生成**的文案（前置检查结果、隧道状态、接口错误、CLI）在 `lib/core/messages.js` 的同一目录里。宿主半只发 `code` + `params`，由调用方按语言渲染——面板请求带 `?locale=`，CLI 用 `--lang`/环境变量。两份字典/目录的键集一致性与占位符一致性都有测试兜底。
 - **新增后端时**：与语言无关的 argv 构造、输出解析、报错分类放进独立模块（参考 `lib/core/tailscale.js`），并写成纯函数；`lib/core/tunnel.js` 只负责生命周期与状态机。失败路径不要自动无限重试（配置类失败重试也不会好）。
 - **注册即副作用**：host 半的每一次注册都通过 `ctx.effect()` 持有 disposer，保证卸载时端口与隧道被回收（测试会验证端口真的释放）。
-- **文档成对更新**：`README.md`（英文）与 `README.zh.md`（中文）是一对，改一边就改另一边。事实只写一处，其余用链接。
+- **文档成对更新**：`README.md`/`README.zh.md`、`docs/self-host.md`/`docs/self-host.zh.md` 各是一对，改一边就改另一边。事实只写一处，其余用链接；`docs/market-submission.md` 是给自己 fork 后上架用的（不进读者路径）。新增面向读者的文档时，记得同步 `package.json` 的 `files` 与 CI 的发布包检查——README 里链到的文件必须在包里，否则 npm 页面上是死链。
 - **提交前**：`npm test && npm run gate`。
 
 ## 发布前检查清单（fork 后第一次发布必须做）
