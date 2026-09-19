@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.2] - 2026-09-19
+
+Documentation-only release: both READMEs now lead with a Risks section (what each entry exposes —
+the LAN entry has no gate at all — what a leaked `?k=` link means, what the tunnel key can and cannot
+do, the root-keys-on-the-same-machine risk, that the sandbox is DSH's rather than this plugin's, what
+is stored where, availability you can lose) plus a six-item pre-flight checklist and the kill switch.
+
 ## [0.1.0-beta.1] - 2026-09-19
 
 First public beta. Installed with `npm i dsh-plugin-remote-connect-beta@beta` (the `latest` tag is left
