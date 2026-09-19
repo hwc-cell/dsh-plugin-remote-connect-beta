@@ -12,6 +12,15 @@ All notable changes to this project are documented here. The format follows [Kee
 - `doctor` reports the tailscale funnel check when the configured tunnel mode is `tailscale`.
 - CI workflow (Node 20/22: gate → tests → pack-content check), `CONTRIBUTING.md`, Homebrew formula template and `docs/market-submission.md`.
 
+### Added
+
+- **Multi-tenant gateway**: each tenant gets their own Harness process — own `DSH_HOME`, own loopback port, own launch token, own credentials. The key gate resolves the tenant from `?k=`/cookie and routes that request to that tenant's upstream with that tenant's token; the cookie is signed with a secret independent of every tenant key.
+  - `lib/core/tenant.js` (registry, 0600, atomic writes, duplicate id/key rejection, tolerant loading), `lib/core/instance.js` (per-tenant supervisor: real-node spawn, token from the child's own stdout, backoff restart, per-tenant `instance.log`), `lib/core/tenancy.js` (orchestration and routing handles), `lib/core/paths.js` (shared state paths).
+  - Panel: a Tenants card — add by name, per-tenant link and QR, start/stop, rotate key, remove, live state and actionable errors.
+  - CLI: `tenant list|add|rm|rotate|key` (registry only) and `serve --multi` (gateway + instances in one process, torn down on exit).
+  - Text is bilingual, and the new `docs/multi-tenant.md` / `.zh.md` explain the isolation model, the registry format, the real-node gotcha and the operating questions.
+- WebSocket upgrades now pass the same key gate as ordinary requests (they previously bypassed it).
+
 ### Documentation
 
 - `docs/self-host.md` + `docs/self-host.zh.md`: the long-form guide to the `selfhost` backend — link shape, scripted vs manual server setup, TLS with served-vs-on-disk fingerprint verification, the restricted tunnel account, DNS with multiple views, client configuration, verification commands and a troubleshooting table.

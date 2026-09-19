@@ -30,7 +30,7 @@ jobs:
           node -e '
           const files = JSON.parse(require("fs").readFileSync("/tmp/pack.json", "utf8"))[0].files.map((f) => f.path)
           // README 链接到的文件也必须在包里，否则 npm 页面上是死链
-          const required = ["bin/dsh-remote.js", "lib/index.js", "lib/client.js", "lib/core/assets/server-setup.sh.tpl", "lib/core/messages.js", "lib/core/tailscale.js", "README.md", "README.zh.md", "docs/self-host.md", "docs/self-host.zh.md", "LICENSE"]
+          const required = ["bin/dsh-remote.js", "lib/index.js", "lib/client.js", "lib/core/assets/server-setup.sh.tpl", "lib/core/messages.js", "lib/core/tailscale.js", "README.md", "README.zh.md", "docs/self-host.md", "docs/self-host.zh.md", "docs/multi-tenant.md", "docs/multi-tenant.zh.md", "LICENSE"]
           const missing = required.filter((r) => !files.includes(r))
           if (missing.length > 0) { console.error("发布包缺少：", missing.join(", ")); process.exit(1) }
           console.log("发布包内容 OK（" + files.length + " 个文件）")

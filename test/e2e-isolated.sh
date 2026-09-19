@@ -27,11 +27,17 @@ failed=0
 ok()   { passed=$((passed+1)); printf '✔ %s\n' "$1"; }
 bad()  { failed=$((failed+1)); printf '✖ %s\n' "$1"; }
 cleanup() {
+  if [ -n "${CLI_PID:-}" ] && kill -0 "$CLI_PID" 2>/dev/null; then
+    kill "$CLI_PID" 2>/dev/null
+    wait "$CLI_PID" 2>/dev/null
+  fi
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     kill "$PID" 2>/dev/null
     wait "$PID" 2>/dev/null
   fi
-  rm -rf "$HOME_DIR"
+  # 子进程刚退出时可能还在写 compile-cache：等一下再删，删不干净也不影响结论
+  sleep 1
+  rm -rf "$HOME_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -195,6 +201,50 @@ if [ "$CROSS" = "401" ]; then
   ok "多租户：把一个租户的令牌拿到另一个实例上被拒（401）—— 进程级隔离成立"
 else
   bad "多租户：交叉令牌没有被拒绝（cross=${CROSS} self=${SELF} ）"
+fi
+
+
+# 8) CLI 路径：`dsh-remote serve --multi` 自己当网关 + 实例看护
+CLI_PORT="${CLI_PORT:-8892}"
+CLI_REG="$HOME_DIR/cli-tenants.json"
+CLI_HOMES="$HOME_DIR/cli-homes"
+CLI_LOG="$HOME_DIR/cli-serve.log"
+DSH_HOME="$HOME_DIR" "$NODE" "$REPO/bin/dsh-remote.js" tenant add --name "Carol" \
+  --registry "$CLI_REG" --base-dir "$CLI_HOMES" > "$HOME_DIR/cli-add.log" 2>&1
+KEY_C="$(DSH_HOME="$HOME_DIR" "$NODE" "$REPO/bin/dsh-remote.js" tenant key --id carol --registry "$CLI_REG")"
+if [ -n "$KEY_C" ]; then
+  ok "CLI：tenant add/key 能创建租户并取回密钥"
+else
+  bad "CLI：tenant add 失败（$(head -2 "$HOME_DIR/cli-add.log" | tr '\n' ' ')）"
+fi
+DSH_HOME="$HOME_DIR" "$NODE" "$REPO/bin/dsh-remote.js" serve --multi --port "$CLI_PORT" \
+  --registry "$CLI_REG" --base-dir "$CLI_HOMES" --harness-bin "$DSH" --node "$NODE" \
+  > "$CLI_LOG" 2>&1 &
+CLI_PID=$!
+for _ in $(seq 1 90); do
+  grep -q '的入口：' "$CLI_LOG" 2>/dev/null && break
+  sleep 1
+done
+GATE_C="http://127.0.0.1:$CLI_PORT"
+CLI_CODE="$(curl -s -c "$HOME_DIR/jar-c.txt" -o /dev/null -w '%{http_code}' "$GATE_C/?k=$KEY_C" || true)"
+CLI_PAGE="$(curl -s -b "$HOME_DIR/jar-c.txt" -o /dev/null -w '%{http_code}' "$GATE_C/" || true)"
+if [ "$CLI_CODE" = "303" ] && [ "$CLI_PAGE" != "401" ] && [ "$CLI_PAGE" != "000" ]; then
+  ok "CLI：serve --multi 按密钥把人送进他自己的实例（换 Cookie=${CLI_CODE} 页面=${CLI_PAGE} ）"
+else
+  bad "CLI：serve --multi 路由异常（换 Cookie=${CLI_CODE} 页面=${CLI_PAGE} ）"
+fi
+CLI_ANON="$(curl -s -o /dev/null -w '%{http_code}' "$GATE_C/" || true)"
+if [ "$CLI_ANON" = "404" ]; then
+  ok "CLI：多租户网关对匿名请求返回 404"
+else
+  bad "CLI：匿名请求返回 ${CLI_ANON} （期望 404）"
+fi
+kill "$CLI_PID" 2>/dev/null; wait "$CLI_PID" 2>/dev/null
+sleep 1
+if lsof -nP -iTCP:"$CLI_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  bad "CLI：进程退出后网关端口仍被占用"
+else
+  ok "CLI：退出时网关与租户实例都被回收"
 fi
 
 echo

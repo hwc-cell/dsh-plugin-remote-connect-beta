@@ -48,6 +48,77 @@ const STATE = {
   error: null,
 }
 
+/** 多租户：一张卡片里三个人，两个在跑、一个起不来、一个还没开。 */
+const STATE_TENANTS = {
+  ok: true,
+  busy: false,
+  canControl: true,
+  config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+  lan: { running: true, url: 'http://192.0.2.10:8787/', port: 8787, hasToken: true },
+  public: {
+    running: true,
+    domain: 'dsh.example.com',
+    port: 8788,
+    entry: 'https://dsh.example.com/?k=9f2c41ab77e34d0e',
+    tunnel: { phase: 'up', code: 'tunnel.up', params: {}, detail: 'Tunnel connected', publicUrl: null, restarts: 0 },
+    accessKeyGenerated: true,
+    hasToken: true,
+  },
+  tenants: {
+    enabled: true,
+    registry: '~/.dsh/remote-connect/tenants.json',
+    baseDir: '~/DSH-tenants',
+    harness: { bin: '/Applications/DSH/…/@deepseek-ai/dsh/lib/bin.js', node: '/opt/homebrew/bin/node', problem: null },
+    list: [
+      {
+        id: 'alice',
+        name: 'Alice',
+        accessKey: 'demo-alice-0123456789',
+        home: '~/DSH-tenants/alice',
+        profile: 'alice',
+        port: 58581,
+        phase: 'up',
+        detail: 'Tenant alice is serving on 127.0.0.1:58581',
+        running: true,
+        restarts: 0,
+        lanEntry: 'http://192.0.2.10:8787/?k=demo-alice-0123456789',
+        publicEntry: 'https://dsh.example.com/?k=demo-alice-0123456789',
+      },
+      {
+        id: 'bob',
+        name: 'Bob',
+        accessKey: 'demo-bob-0123456789',
+        home: '~/DSH-tenants/bob',
+        profile: 'bob',
+        port: 58582,
+        phase: 'restarting',
+        detail: 'Tenant bob exited (exit 1); restarting in 4s',
+        running: false,
+        restarts: 3,
+        lanEntry: 'http://192.0.2.10:8787/?k=demo-bob-0123456789',
+        publicEntry: null,
+      },
+      {
+        id: 'carol',
+        name: 'Carol',
+        accessKey: 'demo-carol-0123456789',
+        home: '~/DSH-tenants/carol',
+        profile: 'carol',
+        port: 0,
+        phase: 'error',
+        detail: 'Tenant carol kept crashing (exit 1); giving up — fix it, then start it again',
+        hint: 'Install the tailscale client on this machine first',
+        running: false,
+        restarts: 5,
+        lanEntry: 'http://192.0.2.10:8787/?k=demo-carol-0123456789',
+        publicEntry: null,
+      },
+    ],
+  },
+  qr: qrRows('http://192.0.2.10:8787/'),
+  error: null,
+}
+
 /** tailscale 零交付模式：没有自己的域名，地址来自 funnel。 */
 const STATE_TAILSCALE = {
   ok: true,
@@ -98,7 +169,7 @@ const PAGE = (stateJson, frameHeight, shotMode, zoom) => `<!doctype html>
   <div class="note">
     <h3>client 半真浏览器预览</h3>
     <p>左侧是模拟的侧栏底部：先渲染「远程连接」入口，再打开面板（数据是假的，扫码链接也是假的）。</p>
-    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=tailscale">tailscale 零交付</a>（域名留空、地址来自 funnel）</p>
+    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=tailscale">tailscale 零交付</a>（域名留空、地址来自 funnel） · <a href="/?mode=tenants">多租户</a>（三人各一个实例）</p>
     <p>这份页面按 client-modules 的方式装载 bundle：先 <code>window.__ModuleLoader__.load({id, factory})</code>，
        再用真实 React 渲染 <code>apply()</code> 注册进槽位的组件。</p>
     <p id="status">…</p>
@@ -142,8 +213,14 @@ const PAGE = (stateJson, frameHeight, shotMode, zoom) => `<!doctype html>
         { id: 'https', name: 'HTTPS and edge password', ok: false, detail: 'Without credentials the server returned 200, expected 401 (edge password inactive)', hint: 'Check that nginx auth_basic or Caddy basic_auth was reloaded', code: 'preflight.https.noAuth' },
       ],
     };
+    var TENANT_QR = { ok: true, id: 'alice', url: 'http://192.0.2.10:8787/?k=demo-alice-0123456789' };
     window.fetch = function (url) {
-      var body = String(url).indexOf('/check') !== -1 ? CHECK_RESULTS : window.__PREVIEW_STATE__;
+      var target = String(url);
+      var body = target.indexOf('/check') !== -1
+        ? CHECK_RESULTS
+        : target.indexOf('/tenants/qr') !== -1
+          ? TENANT_QR
+          : window.__PREVIEW_STATE__;
       return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve(JSON.stringify(body)); } });
     };
     var lang = 'zh';
@@ -182,7 +259,13 @@ const server = http.createServer((req, res) => {
     return send(
       'text/html; charset=utf-8',
       PAGE(
-        JSON.stringify(url.searchParams.get('mode') === 'tailscale' ? STATE_TAILSCALE : STATE),
+        JSON.stringify(
+          url.searchParams.get('mode') === 'tailscale'
+            ? STATE_TAILSCALE
+            : url.searchParams.get('mode') === 'tenants'
+              ? STATE_TENANTS
+              : STATE,
+        ),
         // 截图用：把模拟 frame 拉高，面板就不会被 overflow 裁掉
         url.searchParams.get('frame') ?? '720',
         url.searchParams.get('shot') === '1',

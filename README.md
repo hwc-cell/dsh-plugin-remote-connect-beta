@@ -20,6 +20,7 @@ Two ways to use it, one shared core:
 | Backend | Work required on the server | Who it suits | Reachability in mainland China |
 | --- | --- | --- | --- |
 | `lan` | **0 items** | Phone/computer on the same Wi-Fi | No external dependency ✅ |
+| `tenants` | **0 items** | Several people, each with their own Harness — see [`docs/multi-tenant.md`](docs/multi-tenant.md) | Depends on the entry above |
 | `cloudflare` | **0 items** (install `cloudflared`, authorize; brings its own certificate, Cloudflare Access available) | Most people | ⚠️ unstable |
 | `tailscale` | **0 items** (`tailscale funnel`; brings its own certificate and domain) | People who prefer not to use Cloudflare | ⚠️ unstable |
 | `selfhost` | **6 items**: DNS / certificate / nginx reverse proxy / edge password / dedicated ssh account / self-test — step-by-step guide: [`docs/self-host.md`](docs/self-host.md) | People with a VPS and their own domain who want full control | ✅ recommended for mainland users |
@@ -33,6 +34,7 @@ Two ways to use it, one shared core:
 | `lan` backend (panel + CLI + mobile layout + QR) | ✅ implemented; verified end to end |
 | `selfhost` backend (ssh -R tunnel, config generation, preflight) | ✅ implemented; the six server-side items are delivered by a generated installer script |
 | `cloudflare` backend | ✅ implemented as a tunnel mode (`--tunnel cloudflared`); ⚠️ not exercised in this environment |
+| Multi-tenant gateway | ✅ implemented and verified against two real instances: per-tenant access key → per-tenant Harness process (`DSH_HOME`, port, launch token), panel card for add/remove/rotate/start/stop with a per-tenant link and QR, and `serve --multi` / `tenant` CLI. Isolation proof: one tenant's token against the other tenant's port returns 401 |
 | `tailscale` backend | ✅ implemented as a tunnel mode (`--tunnel tailscale` / `public.tunnel: tailscale`): runs `tailscale funnel --bg` against the loopback port, reads the node's `ts.net` address from `tailscale status --json`, probes the funnel every 60s, and removes exactly its own mapping on stop. ⚠️ not exercised against a real tailnet in this environment (argv, URL parsing, start/stop and the failure path are unit-tested with a stub binary) |
 | `setup-server` / `uninstall-server` | ✅ implemented: idempotent install/uninstall script (`probe` / `install` / `uninstall` / `--dry-run` / `--skip-*`) that only writes files it owns; the generated script passes `bash -n` and the generator rejects shell injection in its inputs |
 | `doctor` | ✅ implemented: upstream provenance, proxy self-test, four public checks, live certificate expiry, `--expect-cert-sha256` cross-machine fingerprint comparison, local key-leak check |

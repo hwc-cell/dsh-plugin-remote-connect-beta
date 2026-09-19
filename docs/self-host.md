@@ -281,7 +281,6 @@ certificate renewal or nginx edit.
 - No IP allowlist / geo restriction options — access control is the two credentials
   (edge password + `?k=` key) plus the Harness session, by design.
 - No "multi-user inside one Harness": a Harness instance is single-user by construction, and this
-  guide only wires one ingress to one instance. Serving several people means several instances
-  behind one gateway (per-tenant credentials, per-tenant upstream and token, instances supervised
-  by this plugin) — that work is in progress; see the README's security section for the verified
-  isolation facts.
+  guide only wires one ingress to one instance. Serving several people is a separate layer — the
+  gateway gives each tenant their own instance, credentials, port and token; see
+  [`multi-tenant.md`](multi-tenant.md).

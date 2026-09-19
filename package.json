@@ -37,7 +37,10 @@
     "docs/self-host.md",
     "docs/self-host.zh.md",
     "docs/client-preview.png",
-    "docs/market-submission.md"
+    "docs/market-submission.md",
+    "docs/multi-tenant.md",
+    "docs/multi-tenant.zh.md",
+    "docs/tenants-preview.png"
   ],
   "engines": {
     "node": ">=18"

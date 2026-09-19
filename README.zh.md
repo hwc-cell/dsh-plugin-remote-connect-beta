@@ -20,6 +20,7 @@
 | 后端 | 服务器侧要做的事 | 适合谁 | 中国大陆可达性 |
 | --- | --- | --- | --- |
 | `lan` | **0 项** | 同一 Wi-Fi 下的手机/电脑 | 无外部依赖 ✅ |
+| `tenants` | **0 项** | 多个人各用各的 Harness —— 见 [`docs/multi-tenant.zh.md`](docs/multi-tenant.zh.md) | 取决于上面的入口 |
 | `cloudflare` | **0 项**（装 `cloudflared` + 登录授权，自带证书，可用 Access 做鉴权） | 大多数人 | ⚠️ 不稳定 |
 | `tailscale` | **0 项**（`tailscale funnel`，自带证书与域名） | 不想用 Cloudflare 的人 | ⚠️ 不稳定 |
 | `selfhost` | 详见 [`docs/self-host.zh.md`](docs/self-host.zh.md)；**6 项**：DNS / 证书 / nginx 反代 / 边缘口令 / 专用 ssh 账号 / 自测 | 有 VPS 与自有域名、要完全自主可控 | ✅ 推荐给大陆用户 |
@@ -34,6 +35,7 @@
 | `lan` 后端（面板 + CLI + 手机适配 + 二维码） | ✅ 已实现并端到端验证 |
 | `selfhost` 后端（ssh -R 隧道、配置生成、前置检查） | ✅ 已实现；服务器侧 6 项仍需按 `snippets` 的产物人工落地 |
 | `cloudflare` 后端 | ✅ 作为隧道模式实现（`--tunnel cloudflared`）；⚠️ 本环境未实连验证 |
+| 多租户网关 | ✅ 已实现并用两个真实实例验证：每租户一把访问密钥 → 每租户一个独立 Harness 进程（独立 `DSH_HOME`、端口、启动令牌）；面板有增删/轮换/启停与每人的链接和二维码；`serve --multi` 与 `tenant` CLI 齐备。隔离硬证据：把 A 的令牌打到 B 的端口返回 401 |
 | `tailscale` 后端 | ✅ 已作为隧道模式实现（`--tunnel tailscale` / `public.tunnel: tailscale`）：对本机回环端口执行 `tailscale funnel --bg`，从 `tailscale status --json` 取节点的 `ts.net` 域名，每 60s 探测一次 funnel，停止时只撤销自己那一条映射。⚠️ 本环境没有真实 tailnet，未实连验证（argv、域名解析、启停与失败路径都用桩二进制做了单测） |
 | `setup-server` / `uninstall-server` | ✅ 已实现：生成幂等安装/卸载脚本（`probe` / `install` / `uninstall` / `--dry-run` / `--skip-*`），只写自己独占的文件；生成物过 `bash -n` 并有注入防护测试 |
 | `doctor` | ✅ 已实现：上游来源、代理自测、公网四项、线上证书到期与生效性、本机密钥泄漏检查 |

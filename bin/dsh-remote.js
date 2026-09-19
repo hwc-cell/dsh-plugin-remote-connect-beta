@@ -13,11 +13,15 @@ import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { createProxy, qrRows, defaultLogCandidates } from '../lib/core/proxy.js'
+import { createProxy, qrRows, defaultLogCandidates, lanAddresses } from '../lib/core/proxy.js'
 import { createTunnel } from '../lib/core/tunnel.js'
 import { runPreflight } from '../lib/core/preflight.js'
 import { normalizeLocale, resolveLocale, translator } from '../lib/core/messages.js'
 import { buildServerSetupScript, buildServerUninstallScript } from '../lib/core/serversetup.js'
+import { createTenancy } from '../lib/core/tenancy.js'
+import { defaultGateSecretPath, defaultRegistryPath, loadOrCreateGateSecret, pluginStateDir } from '../lib/core/paths.js'
+import { createRegistry, defaultTenantBaseDir, generateAccessKey, slugifyId } from '../lib/core/tenant.js'
+import { discoverHarnessBin, discoverRuntime } from '../lib/core/instance.js'
 import {
   NGINX_UPGRADE_MAP,
   nginxServerBlock,
@@ -117,10 +121,20 @@ function printQr(url) {
   process.stdout.write(lines.join('\n') + '\n')
 }
 
+/** 多租户模式下某个人的入口链接（局域网优先）。 */
+function tenantEntryFor(tenant, info, flags) {
+  const lanIp = info.addresses.length > 0 ? info.addresses[0].address : null
+  if (lanIp !== null) return 'http://' + lanIp + ':' + String(info.port) + '/?k=' + tenant.accessKey
+  const domain = typeof flags.domain === 'string' ? flags.domain : ''
+  return domain === '' ? null : 'https://' + domain + '/?k=' + tenant.accessKey
+}
+
 async function commandServe(flags) {
   const isPublic = flags.public === true
+  const multi = flags.multi === true
   const accessKey = typeof flags.key === 'string' ? flags.key : ''
-  if (isPublic && accessKey === '' && flags['allow-no-key'] !== true) {
+  // 多租户下没有"全局密钥"：每个人都有自己那把，所以不要求 --key
+  if (isPublic && !multi && accessKey === '' && flags['allow-no-key'] !== true) {
     fail(t('cli.error.needKey'))
   }
   if (isPublic && accessKey === '' && flags['allow-no-key'] === true) {
@@ -130,18 +144,53 @@ async function commandServe(flags) {
   const upstreamPort = flags.upstream !== undefined ? Number(flags.upstream) : undefined
   const domains = [].concat(flags.domain ?? [])
 
+  // 多租户：本进程既当网关又当实例看护（退出时会一起收掉）
+  let tenancy = null
+  let tenantRouter = null
+  let gateSecret = ''
+  if (multi) {
+    const { registry: registryFile, baseDir } = tenantRegistryOptions(flags)
+    gateSecret = loadOrCreateGateSecret(defaultGateSecretPath()).secret
+    tenancy = createTenancy({
+      config: {
+        enabled: true,
+        registry: registryFile,
+        baseDir,
+        autostart: true,
+        harness: {
+          bin: typeof flags['harness-bin'] === 'string' ? flags['harness-bin'] : '',
+          node: typeof flags.node === 'string' ? flags.node : '',
+          extraArgs: [],
+        },
+        list: [],
+      },
+      log: (line) => process.stderr.write('· ' + line + '\n'),
+    })
+    const loaded = tenancy.load()
+    if (tenancy.harness.problem !== null) fail(tenancy.harness.problem)
+    process.stderr.write('· ' + t('cli.multi.registry', { file: registryFile, count: String(loaded.total) }) + '\n')
+    tenantRouter = { findById: (id) => tenancy.handle(id), findByKey: (key) => tenancy.findByKey(key) }
+  }
+
   const proxy = createProxy({
     port,
     upstreamPort,
     listenHost: isPublic ? '127.0.0.1' : '0.0.0.0',
     token: typeof flags.token === 'string' ? flags.token : '',
     logPaths: defaultLogCandidates(),
-    accessKey,
+    accessKey: multi ? '' : accessKey,
+    gateSecret: multi ? gateSecret : undefined,
+    tenants: tenantRouter,
     allowedHosts: domains,
     mobileAdaptation: flags['no-mobile'] !== true,
     log: (line) => process.stderr.write('· ' + line + '\n'),
   })
   const info = await proxy.start()
+
+  if (multi) {
+    const started = tenancy.startAutostart()
+    process.stderr.write('· ' + t('cli.multi.started', { count: String(started.length) }) + '\n')
+  }
 
   let tunnel = null
   if (typeof flags.tunnel === 'string') {
@@ -177,6 +226,7 @@ async function commandServe(flags) {
         : null
   const payload = {
     ...info,
+    tenants: tenancy === null ? null : tenancy.list(),
     tunnel: tunnel === null ? null : tunnel.state(),
     entry: publicBase ?? info.lanUrl,
     publicEntry: publicBase === null ? null : publicBase + (accessKey === '' ? '' : '?k=' + accessKey),
@@ -199,6 +249,17 @@ async function commandServe(flags) {
       process.stdout.write(t('cli.serve.public', { url: entryUrl }) + '\n')
       printQr(entryUrl)
     }
+    if (multi) {
+      for (const tenant of tenancy.list()) {
+        const link = tenantEntryFor(tenant, info, flags)
+        process.stdout.write('\n' + t('cli.multi.tenant', { name: tenant.name, id: tenant.id }) + '\n')
+        if (link !== null) {
+          process.stdout.write('  ' + link + '\n')
+          printQr(link)
+        }
+      }
+      process.stdout.write('\n' + t('cli.multi.note') + '\n')
+    }
     if (tunnel !== null) {
       process.stdout.write(t('cli.serve.tunnel', { phase: t('phase.' + tunnel.state().phase) }) + '\n')
     }
@@ -207,6 +268,7 @@ async function commandServe(flags) {
 
   const shutdown = async () => {
     process.stdout.write('\n' + t('cli.serve.stopping') + '\n')
+    if (tenancy !== null) await tenancy.stopAll()
     if (tunnel !== null) await tunnel.stop()
     await proxy.stop()
     process.exit(0)
@@ -309,6 +371,114 @@ function commandSetupServer(flags) {
       ? '下一步：scp ' + out + ' <服务器>:/tmp/ && ssh <服务器> "sudo bash /tmp/' + path.basename(out) + ' [--purge-user]"\n'
       : '下一步：scp ' + out + ' <服务器>:/tmp/ && ssh <服务器> "sudo bash /tmp/' + path.basename(out) + ' probe"\n',
   )
+}
+
+/** 租户注册表的位置与 home 基准（与插件默认值一致，避免两边算出不同目录）。 */
+function tenantRegistryOptions(flags, env = process.env) {
+  return {
+    registry: typeof flags.registry === 'string' ? flags.registry : defaultRegistryPath(env),
+    baseDir: typeof flags['base-dir'] === 'string' ? flags['base-dir'] : defaultTenantBaseDir(),
+  }
+}
+
+/** 某个租户现在能用的入口链接（局域网优先；公网要等隧道与域名都就绪）。 */
+function tenantLinks(tenant, flags) {
+  const lanPort = flags['lan-port'] !== undefined ? Number(flags['lan-port']) : 8787
+  const addresses = lanAddresses()
+  const lanIp = addresses.length > 0 ? addresses[0].address : null
+  const lan = lanIp === null ? null : 'http://' + lanIp + ':' + String(lanPort) + '/?k=' + tenant.accessKey
+  const domain = typeof flags.domain === 'string' ? flags.domain : ''
+  const publicEntry = domain === '' ? null : 'https://' + domain + '/?k=' + tenant.accessKey
+  return { lan, public: publicEntry }
+}
+
+/**
+ * `dsh-remote tenant …` —— 租户注册表的命令行入口。
+ *
+ * 刻意**不**在这里拉起/停止实例：实例属于"跑网关的那个进程"（DSH 插件或 `serve --multi`），
+ * CLI 起了也会随命令退出而变成孤儿进程。启停请在宿主窗口的面板里做。
+ */
+function commandTenant(flags, rest) {
+  const action = rest[0] ?? 'list'
+  const { registry: file, baseDir } = tenantRegistryOptions(flags)
+  const registry = createRegistry({ file, baseDir, log: (line) => process.stderr.write('· ' + line + '\n') })
+  registry.load()
+  const find = (value) => {
+    if (typeof value !== 'string' || value === '') return null
+    const byId = registry.get(value)
+    if (byId !== null) return byId
+    return registry.list().find((item) => item.name === value) ?? null
+  }
+
+  if (action === 'list') {
+    const list = registry.list()
+    process.stdout.write('注册表：' + file + '\n')
+    if (list.length === 0) {
+      process.stdout.write(t('cli.tenant.empty') + '\n')
+      return
+    }
+    for (const tenant of list) {
+      const links = tenantLinks(tenant, flags)
+      process.stdout.write(
+        '· ' + tenant.name + ' (' + tenant.id + ')' + (tenant.autostart ? '' : t('cli.tenant.noAutostart')) + '\n',
+      )
+      process.stdout.write('    home: ' + tenant.home + '\n')
+      if (links.lan !== null) process.stdout.write('    ' + t('cli.tenant.lan') + ' ' + links.lan + '\n')
+      if (links.public !== null) process.stdout.write('    ' + t('cli.tenant.public') + ' ' + links.public + '\n')
+    }
+    process.stdout.write('\n' + t('cli.tenant.instancesNote') + '\n')
+    return
+  }
+
+  if (action === 'add') {
+    const name = typeof flags.name === 'string' ? flags.name : rest.slice(1).join(' ')
+    if (name.trim() === '' && typeof flags.id !== 'string') {
+      fail(t('cli.error.tenantNameRequired'))
+    }
+    // id 由显示名推导（中文名推不出可读 id 时会得到 u-xxxxxx，用 --id 可指定）
+    const id = typeof flags.id === 'string' && flags.id !== '' ? flags.id : slugifyId(name, 'u')
+    const created = registry.add({
+      id,
+      name: name.trim() === '' ? id : name.trim(),
+      note: typeof flags.note === 'string' ? flags.note : '',
+    })
+    const links = tenantLinks(created, flags)
+    process.stdout.write(t('cli.tenant.added', { id: created.id, home: created.home }) + '\n')
+    process.stdout.write(t('cli.tenant.key') + ' ' + created.accessKey + '\n')
+    if (links.lan !== null) {
+      process.stdout.write(t('cli.tenant.lan') + ' ' + links.lan + '\n')
+      printQr(links.lan)
+    }
+    if (links.public !== null) process.stdout.write(t('cli.tenant.public') + ' ' + links.public + '\n')
+    process.stdout.write('\n' + t('cli.tenant.instancesNote') + '\n')
+    return
+  }
+
+  if (!['rm', 'remove', 'rotate', 'key'].includes(action)) {
+    fail(t('cli.error.tenantUnknownAction', { action }))
+  }
+  const target = find(typeof flags.id === 'string' ? flags.id : rest[1])
+  if (target === null) fail(t('cli.tenant.notFound', { id: String(rest[1] ?? flags.id ?? '') }))
+
+  if (action === 'rm' || action === 'remove') {
+    registry.remove(target.id)
+    process.stdout.write(t('cli.tenant.removed', { id: target.id, home: target.home }) + '\n')
+    return
+  }
+  if (action === 'rotate') {
+    const rotated = registry.rotateKey(target.id)
+    const links = tenantLinks(rotated, flags)
+    process.stdout.write(t('cli.tenant.rotated', { id: rotated.id }) + '\n')
+    process.stdout.write(t('cli.tenant.key') + ' ' + rotated.accessKey + '\n')
+    if (links.lan !== null) process.stdout.write(t('cli.tenant.lan') + ' ' + links.lan + '\n')
+    if (links.public !== null) process.stdout.write(t('cli.tenant.public') + ' ' + links.public + '\n')
+    return
+  }
+  if (action === 'key') {
+    process.stdout.write(target.accessKey + '\n')
+    return
+  }
+  fail(t('cli.error.tenantUnknownAction', { action }))
 }
 
 async function commandDoctor(flags) {
@@ -489,10 +659,26 @@ function commandKeygen(flags) {
 }
 
 async function main() {
-  const argv = process.argv.slice(2)
-  // `dsh-remote --help` 也要能用：首个参数是选项时按 help 处理
-  const command = argv[0] === undefined || argv[0].startsWith('--') ? 'help' : argv[0]
-  const { flags } = parseArgs(command === 'help' ? argv : argv.slice(1))
+  const raw = process.argv.slice(2)
+  // 命令词前面允许放全局选项（`dsh-remote --lang zh tenant list`）：
+  // 逐个吃掉前导 `--flag [value]`，剩下的第一个词才是命令。
+  const leading = []
+  let argv = raw
+  while (argv.length > 0 && argv[0].startsWith('--')) {
+    const key = argv[0]
+    if (key === '--help' || key === '-h') {
+      leading.push(key)
+      argv = argv.slice(1)
+      continue
+    }
+    const next = argv[1]
+    const hasValue = next !== undefined && !next.startsWith('--')
+    leading.push(key, ...(hasValue ? [next] : []))
+    argv = argv.slice(hasValue ? 2 : 1)
+  }
+  const helpRequested = leading.includes('--help') || leading.includes('-h')
+  const command = argv[0] === undefined || helpRequested ? 'help' : argv[0]
+  const { flags, rest } = parseArgs(command === 'help' ? [...leading, ...argv] : [...leading, ...argv.slice(1)])
   // --lang 优先于环境变量；未知取值退回环境推断（不因为写错语言就让命令失败）
   const requested = normalizeLocale(flags.lang)
   if (requested !== undefined) {
@@ -510,6 +696,7 @@ async function main() {
   if (command === 'setup-server') return commandSetupServer(flags)
   if (command === 'uninstall-server') return commandSetupServer({ ...flags, uninstall: true })
   if (command === 'doctor') return await commandDoctor(flags)
+  if (command === 'tenant' || command === 'tenants') return commandTenant(flags, rest)
   fail(t('cli.error.unknownCommand', { command }) + '\n\n' + helpText())
 }
 

@@ -351,6 +351,20 @@ const canned = {
     qr: ['1111111', '1000001', '1011101', '1011101', '1011101', '1000001', '1111111'],
     error: null,
   },
+  [API + '/tenants/add']: {
+    ok: true,
+    tenant: { id: 'carol', name: 'Carol', accessKey: 'key-carol-0123456789', port: 58583, phase: 'starting', running: false },
+    tenants: [
+      { id: 'alice', name: 'Alice', port: 58581, phase: 'up', running: true, lanEntry: 'http://192.0.2.10:8787/?k=key-alice-0123456789' },
+      { id: 'carol', name: 'Carol', port: 0, phase: 'starting', running: false, lanEntry: 'http://192.0.2.10:8787/?k=key-carol-0123456789' },
+    ],
+  },
+  [API + '/tenants/remove']: {
+    ok: true,
+    tenants: [{ id: 'alice', name: 'Alice', port: 58581, phase: 'up', running: true }],
+  },
+  [API + '/tenants/rotate']: { ok: true, tenants: [{ id: 'alice', name: 'Alice', port: 58581, phase: 'up', running: true }] },
+  [API + '/tenants/qr']: { ok: true, id: 'alice', url: 'http://192.0.2.10:8787/?k=key-alice-0123456789', rows: ['111', '101', '111'] },
   [API + '/lan/start']: { ok: true, busy: false, canControl: true, config: { problems: [] }, lan: { running: true, url: 'http://192.0.2.10:8787/' }, public: { running: false, domain: '', entry: null, tunnel: null }, qr: null },
 }
 globalThis.fetch = async (url, options) => {
@@ -462,6 +476,120 @@ check(
   checkPanel.includes('dshRcCheckMark') && checkPanel.includes('dshRcCheckDetail') && checkPanel.includes('：') === false,
 )
 clientExports.internals.setState({ checkResults: null })
+
+// ── 多租户面板：租户卡片、动作与二维码 ──
+clientExports.internals.setState({
+  data: {
+    ok: true,
+    busy: false,
+    canControl: true,
+    config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
+    lan: { running: true, url: 'http://192.0.2.10:8787/', port: 8787 },
+    public: { running: false, domain: 'dsh.example.com', port: 8788, entry: 'https://dsh.example.com/?k=x', tunnel: null },
+    tenants: {
+      enabled: true,
+      registry: '/tmp/tenants.json',
+      baseDir: '/tmp/homes',
+      harness: { bin: '/x/bin.js', node: '/usr/bin/node', problem: null },
+      list: [
+        {
+          id: 'alice',
+          name: 'Alice',
+          accessKey: 'key-alice-0123456789',
+          home: '/tmp/homes/alice',
+          profile: 'alice',
+          port: 58581,
+          phase: 'up',
+          detail: 'Tenant alice is serving on 127.0.0.1:58581',
+          running: true,
+          restarts: 0,
+          lanEntry: 'http://192.0.2.10:8787/?k=key-alice-0123456789',
+          publicEntry: 'https://dsh.example.com/?k=key-alice-0123456789',
+        },
+        {
+          id: 'bob',
+          name: 'Bob',
+          accessKey: 'key-bob-0123456789',
+          home: '/tmp/homes/bob',
+          profile: 'bob',
+          port: 0,
+          phase: 'idle',
+          detail: 'Not started',
+          running: false,
+          restarts: 0,
+          lanEntry: 'http://192.0.2.10:8787/?k=key-bob-0123456789',
+          publicEntry: null,
+        },
+      ],
+    },
+    qr: null,
+    error: null,
+  },
+  tenantQr: null,
+  tenantQrId: null,
+  tenantDraft: '',
+})
+const tenantsPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+check(
+  'client: 租户卡片渲染出每个租户、状态与专属入口',
+  tenantsPanel.includes('«card.tenants»') &&
+    tenantsPanel.includes('Alice · alice') &&
+    tenantsPanel.includes('Bob · bob') &&
+    tenantsPanel.includes('http://192.0.2.10:8787/?k=key-alice-0123456789') &&
+    tenantsPanel.includes('«tenants.notRunning»'),
+)
+check(
+  'client: 租户卡片有新增/删除/换密钥/二维码四个动作，且新增框是占位文案',
+  tenantsPanel.includes('«tenants.add»') &&
+    tenantsPanel.includes('«tenants.remove»') &&
+    tenantsPanel.includes('«tenants.rotate»') &&
+    tenantsPanel.includes('«tenants.qr»') &&
+    tenantsPanel.includes('«tenants.addPlaceholder»'),
+)
+check(
+  'client: 运行中的租户显示端口，未运行的提示去开（不是让人对着 0 发呆）',
+  tenantsPanel.includes('58581') && tenantsPanel.includes('«tenants.port»'),
+)
+check(
+  'client: 找不到 harness 入口时把问题摊开（否则每个租户都起不来）',
+  (() => {
+    const before = clientExports.internals.store.data
+    clientExports.internals.setState({
+      data: { ...before, tenants: { ...before.tenants, harness: { problem: '找不到 DSH Harness 入口：请配置 tenants.harness.bin' } } },
+    })
+    const html = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+    clientExports.internals.setState({ data: before })
+    return html.includes('tenants.harness.bin')
+  })(),
+)
+await clientExports.internals.tenantAdd()
+check(
+  'client: 新增租户走 POST /tenants/add（名字为空时不发请求）',
+  calls.filter((item) => item.pathname === API + '/tenants/add').length === 0 ||
+    calls.some((item) => item.pathname === API + '/tenants/add' && item.method === 'POST'),
+)
+clientExports.internals.setState({ tenantDraft: 'Carol' })
+await clientExports.internals.tenantAdd()
+check(
+  'client: 新增后清空输入框，并把返回的租户列表写回 store',
+  calls.some((item) => item.pathname === API + '/tenants/add' && item.method === 'POST') &&
+    clientExports.internals.store.tenantDraft === '' &&
+    (clientExports.internals.store.data?.tenants?.list ?? []).some((item) => item.id === 'carol'),
+)
+await clientExports.internals.tenantAction('remove', { id: 'bob' })
+check(
+  'client: 删除/启停/换密钥都打到 /tenants/<action>',
+  calls.some((item) => item.pathname === API + '/tenants/remove' && item.method === 'POST'),
+)
+await clientExports.internals.tenantQr('alice')
+check(
+  'client: 点二维码会请求 /tenants/qr?id=…，并把矩阵写进 store 供渲染',
+  calls.some((item) => item.pathname === API + '/tenants/qr') &&
+    Array.isArray(clientExports.internals.store.tenantQr) &&
+    clientExports.internals.store.tenantQrId === 'alice',
+)
+await clientExports.internals.tenantQr('alice')
+check('client: 再点一次收起二维码（不会重复请求）', clientExports.internals.store.tenantQr === null)
 
 // 回归：首次 /state 请求失败（store.data 仍为 null）时面板必须还能渲染
 clientExports.internals.setState({ data: null })
@@ -825,6 +953,8 @@ const mdFiles = [
   'SECURITY.md',
   'docs/self-host.md',
   'docs/self-host.zh.md',
+  'docs/multi-tenant.md',
+  'docs/multi-tenant.zh.md',
   'docs/market-submission.md',
 ]
 const brokenLinks = []
