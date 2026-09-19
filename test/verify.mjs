@@ -1537,5 +1537,84 @@ check(
 )
 await gateProxy.stop()
 
+// ──────────────────── 令牌过期 + 有 provider 时也要能刷新（线上死循环的真因） ────────────────────
+
+let providerToken = 'provider-one-111111111111'
+let providerCalls = 0
+let upstreamWants = 'provider-one-111111111111'
+const seenProvider = []
+const providerUpstream = http.createServer((req, res) => {
+  seenProvider.push(req.url)
+  const token = (req.url.match(/token=([A-Za-z0-9_-]+)/) ?? [])[1] ?? ''
+  if (token === upstreamWants && token !== '') {
+    res.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-' + token + '=v1; Path=/' })
+    res.end()
+    return
+  }
+  if (req.url.includes('token=')) {
+    // 真实 Harness 的行为：认得的令牌 → 303 + 设 Cookie；不认得的令牌 → 401
+    res.writeHead(401, { 'content-type': 'text/plain' })
+    res.end('unauthorized')
+    return
+  }
+  if (String(req.headers.cookie ?? '').includes('dsh-auth-' + upstreamWants)) {
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<!doctype html><title>ok</title>')
+    return
+  }
+  res.writeHead(401, { 'content-type': 'text/plain' })
+  res.end('unauthorized')
+})
+const providerPort = await listen(providerUpstream)
+const providerProxy = createProxy({
+  port: 0,
+  listenHost: '127.0.0.1',
+  upstreamPort: providerPort,
+  tokenProvider: () => {
+    providerCalls += 1
+    return providerToken
+  },
+})
+const providerInfo = await providerProxy.start()
+const firstHit = await rawRequest(HOST + String(providerInfo.port) + '/')
+check(
+  'proxy: 首次访问用 provider 给的令牌并换到 Cookie',
+  firstHit.status === 303 && seenProvider.some((url) => url.includes('provider-one-111111111111')),
+  seenProvider.join(' | ').slice(0, 80),
+)
+// Harness 重启：provider 现在给新令牌
+providerToken = 'provider-two-222222222222'
+upstreamWants = 'provider-two-222222222222'
+const before = providerCalls
+const healed = await rawRequest(HOST + String(providerInfo.port) + '/', {
+  headers: { cookie: 'dsh-auth-provider-one-111111111111=v1' },
+})
+check(
+  'proxy: 旧 Cookie 失效时，即使配了 tokenProvider 也会重新取令牌并重定向一次（线上死循环的真因）',
+  healed.status === 303 &&
+    String(healed.headers.location).startsWith('/?token=') &&
+    String(healed.headers.location).includes('provider-two-222222222222') &&
+    providerCalls > before,
+  'HTTP ' + String(healed.status) + ' → ' + String(healed.headers.location).slice(0, 44),
+)
+const afterHeal = await rawRequest(
+  HOST + String(providerInfo.port) + '/?token=' + encodeURIComponent(String(healed.headers.location).split('token=')[1]),
+)
+check(
+  'proxy: 跟随那次重定向后拿到 303 → /（下一跳带新 Cookie，不会打转）',
+  afterHeal.status === 303 && afterHeal.headers.location === '/',
+  'HTTP ' + String(afterHeal.status),
+)
+const loopBreaker = await rawRequest(HOST + String(providerInfo.port) + '/?token=stale-cached-token-9999', {
+  headers: { cookie: 'dsh-auth-stale=v1' },
+})
+check(
+  'proxy: 已经带着 token 的请求再吃 401 时不再重定向（硬保险，宁可让人看到一次 401）',
+  loopBreaker.status === 401 && loopBreaker.headers.location === undefined,
+  'HTTP ' + String(loopBreaker.status) + ' location=' + String(loopBreaker.headers.location),
+)
+await providerProxy.stop()
+providerUpstream.close()
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)
