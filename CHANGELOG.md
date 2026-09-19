@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Diagnostics for the second gate, per the server side's confirmation document: failures now carry
+  `X-DSH-Reason` (`no-key` / `bad-key` / `key-unusable` / `host-not-allowed`) while keeping HTTP 404,
+  each reason gets its own page copy, and the plugin logs `reason= key_len= key_fp8=` (a hash prefix,
+  never the key). `GET /_dsh/health` answers without a key and reports tunnel state, key fingerprint,
+  creation time, rotation count, last success and the last 24 h of failures by reason.
+- The access key is now **persisted before it is displayed** (0600, with `createdAt` / `rotations`), so
+  restarts, tunnel reconnects and reboots never change it; the panel shows fingerprint, creation time
+  and rotation count plus a copy-link button.
+- The launch token is no longer put in the browser's URL: a stale session is healed by re-logging in
+  **server-side** and relaying the cookie, so the token never reaches history or Referer.
+
+
 - Changing the access password now requires the current one (re-authentication), per the server side's
   spec: the panel asks for current + new + confirmation, verifies the current value through
   `POST /access-key/verify`, and only then writes. A failed verification writes nothing, five

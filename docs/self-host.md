@@ -330,6 +330,33 @@ certificate renewal or nginx edit.
 
 ---
 
+### 8.5 When a link does not work: read `X-DSH-Reason`
+
+Every failure keeps the same HTTP status (404, so a stranger cannot probe for the entry) but now says
+*why* in a response header and in a distinct page:
+
+| `X-DSH-Reason` | Meaning | Page you see |
+| --- | --- | --- |
+| `no-key` | the request carried no access key at all | short "no access key" page |
+| `bad-key` | the value does not match the current key (truncated or mistyped) | "that key is not correct" |
+| `key-unusable` | the value has the right shape but is a rotated/old key | "that key is no longer valid" |
+| `host-not-allowed` | the request arrived with an unexpected Host header | plain 404 |
+
+```bash
+curl -sS -D - -o /dev/null "https://dsh.example.com/?k=00001111" | grep -i '^x-dsh-reason'
+curl -sS "https://dsh.example.com/_dsh/health"        # no key needed, never returns the key
+```
+
+`/_dsh/health` reports the tunnel state, the key fingerprint, when it was created, how many times it
+has been rotated, the last successful access and the last 24 hours of failures by reason — enough to
+tell "tunnel is down" from "your link is old" without reading any server log. Failures are also logged
+by the plugin as `reason=… key_len=… key_fp8=<sha256 prefix>` — never the key itself.
+
+The access key is persisted (0600) the first time it exists, so restarts, tunnel reconnects and
+reboots do not change it; it only changes when you explicitly reset or change it. The panel shows its
+fingerprint, creation time and rotation count so you can check at a glance whether the link in someone's
+hand is the current one.
+
 ## 9. Troubleshooting
 
 | Symptom | Cause | Fix |

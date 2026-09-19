@@ -1370,16 +1370,19 @@ const healProxy = createProxy({ port: 0, listenHost: '127.0.0.1', upstreamPort: 
 const healInfo = await healProxy.start()
 const heal = await rawRequest(HOST + String(healInfo.port) + '/', { headers: { cookie: 'dsh-auth-old=stale' } })
 check(
-  'proxy: 失效 Cookie → 303 到 /?token=…（浏览器一次就能自愈，且不会打转）',
-  heal.status === 303 && String(heal.headers.location).startsWith('/?token='),
-  'HTTP ' + String(heal.status) + ' → ' + String(heal.headers.location).slice(0, 40),
+  'proxy: 失效 Cookie → 服务端内部用令牌重新登录，Set-Cookie 转给浏览器（令牌不进 URL）',
+  heal.status === 303 &&
+    heal.headers.location === '/' &&
+    String(heal.headers.location).includes('token=') === false &&
+    String([].concat(heal.headers['set-cookie'] ?? [])).includes('dsh-auth-'),
+  'HTTP ' + String(heal.status) + ' -> ' + String(heal.headers.location),
 )
-seenByUpstream.length = 0
-const follow = await rawRequest(HOST + String(healInfo.port) + '/?token=' + encodeURIComponent(String(heal.headers.location).split('token=')[1]))
+const freshCookie = String([].concat(heal.headers['set-cookie'] ?? [])[0] ?? '').split(';')[0]
+const afterHeal2 = await rawRequest(HOST + String(healInfo.port) + '/', { headers: { cookie: freshCookie } })
 check(
-  'proxy: 跟随那次重定向会被原样转发（不再叠加重定向 → 不会成环）',
-  follow.status === 303 && follow.headers.location === '/',
-  'HTTP ' + String(follow.status),
+  'proxy: 拿到新 Cookie 后再访问 / 直接 200（一次自愈，不成环）',
+  afterHeal2.status === 200 && freshCookie.startsWith('dsh-auth-'),
+  'HTTP ' + String(afterHeal2.status),
 )
 
 await injectProxy.stop()
@@ -1586,12 +1589,38 @@ const friendly = await rawRequest(HOST + String(gateInfo.port) + '/?k=wrong-key-
   headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
 })
 check(
-  'gate: 带了错密钥的人看到中文说明页（而不是裸 404），且不回显他试过的密钥',
+  'gate: 带错密钥的人看到中文说明页（而不是裸 404），且不回显他试过的密钥',
   friendly.status === 404 &&
     String(friendly.headers['content-type']).includes('text/html') &&
-    friendly.body.includes('访问密钥已经无效') &&
+    friendly.body.includes('访问密钥不正确') &&
     !friendly.body.includes('wrong-key-0000000000'),
-  'HTTP ' + String(friendly.status),
+  'HTTP ' + String(friendly.status) + ' reason=' + String(friendly.headers['x-dsh-reason']),
+)
+const unusable = await rawRequest(HOST + String(gateInfo.port) + '/?k=' + 'a'.repeat(32), {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
+check(
+  'gate: 形如我们发出去的旧密钥（32 位十六进制）与"抄错了"是两种可区分的失败',
+  unusable.status === 404 &&
+    unusable.headers['x-dsh-reason'] === 'key-unusable' &&
+    unusable.body.includes('访问密钥已经失效'),
+  'reason=' + String(unusable.headers['x-dsh-reason']),
+)
+const health = await rawRequest(HOST + String(gateInfo.port) + '/_dsh/health')
+check(
+  'health: /_dsh/health 不需要密钥，只回指纹与计数（绝不回 key）',
+  health.status === 200 &&
+    (() => {
+      const payload = JSON.parse(health.body)
+      return (
+        typeof payload.key_fp8 === 'string' &&
+        (/^[0-9a-f]{8}$/.test(payload.key_fp8) || payload.key_fp8.includes('…')) &&
+        payload.failures_last_24h['bad-key'] >= 1 &&
+        payload.failures_last_24h['key-unusable'] >= 1 &&
+        health.body.includes('the-real-key-0123456789') === false
+      )
+    })(),
+  health.body.replace(/\s+/g, ' ').slice(0, 90),
 )
 const bare = await rawRequest(HOST + String(gateInfo.port) + '/')
 check(
@@ -1654,19 +1683,18 @@ const healed = await rawRequest(HOST + String(providerInfo.port) + '/', {
   headers: { cookie: 'dsh-auth-provider-one-111111111111=v1' },
 })
 check(
-  'proxy: 旧 Cookie 失效时，即使配了 tokenProvider 也会重新取令牌并重定向一次（线上死循环的真因）',
+  'proxy: 旧 Cookie 失效时，即使配了 tokenProvider 也会重新取令牌并在服务端完成登录（死循环真因）',
   healed.status === 303 &&
-    String(healed.headers.location).startsWith('/?token=') &&
-    String(healed.headers.location).includes('provider-two-222222222222') &&
-    providerCalls > before,
-  'HTTP ' + String(healed.status) + ' → ' + String(healed.headers.location).slice(0, 44),
+    healed.headers.location === '/' &&
+    providerCalls > before &&
+    seenProvider.some((url) => url.includes('provider-two-222222222222')),
+  'HTTP ' + String(healed.status) + ' | 上游最后一条：' + String(seenProvider.slice(-1)[0]),
 )
-const afterHeal = await rawRequest(
-  HOST + String(providerInfo.port) + '/?token=' + encodeURIComponent(String(healed.headers.location).split('token=')[1]),
-)
+const healedCookie = String([].concat(healed.headers['set-cookie'] ?? [])[0] ?? '').split(';')[0]
+const afterHeal = await rawRequest(HOST + String(providerInfo.port) + '/', { headers: { cookie: healedCookie } })
 check(
-  'proxy: 跟随那次重定向后拿到 303 → /（下一跳带新 Cookie，不会打转）',
-  afterHeal.status === 303 && afterHeal.headers.location === '/',
+  'proxy: 用新 Cookie 再访问 / 直接 200（不会打转）',
+  afterHeal.status === 200,
   'HTTP ' + String(afterHeal.status),
 )
 const loopBreaker = await rawRequest(HOST + String(providerInfo.port) + '/?token=stale-cached-token-9999', {
