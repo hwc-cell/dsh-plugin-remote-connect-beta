@@ -1,0 +1,59 @@
+{
+  "name": "dsh-plugin-remote-connect",
+  "version": "0.1.0",
+  "description": "让 DSH Harness 可从局域网或公网访问：本机反向代理（含手机适配与访问密钥门）+ ssh 反向隧道 + 服务器配置生成与前置检查。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./core": "./lib/core/proxy.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-remote": "bin/dsh-remote.js"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "test": "node test/verify.mjs",
+    "gate": "bash test/no-private-values.sh",
+    "e2e": "bash test/e2e-isolated.sh",
+    "doctor": "node bin/dsh-remote.js doctor",
+    "preview": "node test/browser/serve.mjs"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "README.md",
+    "README.zh.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis-plugin",
+    "remote",
+    "tunnel"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

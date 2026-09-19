@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      # 门禁：仓库里不得出现作者私有值（自有域名 / 服务器 IP / 本机路径 / 真实公钥）
+      - run: npm run gate
+      # 契约 / 渲染 / 生成物 / 本地化断言（含把生成的安装脚本喂给 bash -n）
+      - run: npm test
+      # 发布包必须包含 bin 与 assets 模板，否则 npx 与 setup-server 会在别人机器上失败
+      - name: 发布包内容检查
+        run: |
+          npm pack --dry-run --json > /tmp/pack.json
+          node -e '
+          const files = JSON.parse(require("fs").readFileSync("/tmp/pack.json", "utf8"))[0].files.map((f) => f.path)
+          const required = ["bin/dsh-remote.js", "lib/index.js", "lib/client.js", "lib/core/assets/server-setup.sh.tpl", "README.md", "LICENSE"]
+          const missing = required.filter((r) => !files.includes(r))
+          if (missing.length > 0) { console.error("发布包缺少：", missing.join(", ")); process.exit(1) }
+          console.log("发布包内容 OK（" + files.length + " 个文件）")
+          '
