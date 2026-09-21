@@ -116,7 +116,7 @@ reason for them to install this on their own machine.
 | Token acquisition (no log scraping) | ✅ official `connection.authenticatedUrl()`, resolved lazily; the log fallback accepts **only a start line whose port matches this process** |
 | Credentials never persisted | ✅ `?k=` never reaches logs (the generated template redacts by default); no secrets in the repository |
 | Config validation | ✅ exports `Config` as a zero-dependency Standard Schema: out-of-range ports, malformed domains, unknown `tunnel` values fail **before activation** |
-| Bilingual panel | ✅ zh/en dictionaries (29 keys each) with `locale` as a soft dependency |
+| Bilingual panel | ✅ zh/en dictionaries (66 keys each) with `locale` as a soft dependency |
 | Bilingual host-side text | ✅ one catalog (`lib/core/messages.js`, 87 keys per language) renders preflight results, tunnel state and panel API errors in the language the panel asks for (`?locale=`); `doctor`/`setup-server`/`keygen` detail output is still Chinese-only and prints an English notice (see CHANGELOG) |
 | Certificate "is it actually served?" | ✅ two paths: the installer compares served vs on-disk live, and prints `--expect-cert-sha256` for `doctor` to verify from outside |
 
@@ -175,6 +175,14 @@ npm install dsh-plugin-remote-connect-beta
 > Keep `id` equal to the package name (the shipped patches do the same), and do **not** also pass the same file with `--patch`: the profile's `cordis.patch.yml` is already loaded, and applying it twice fails with `duplicate loader entry id`.
 
 Panel switches work **only in the host window** (loopback, not through a proxy); remote visitors get a read-only panel. That is deliberate — a remote visitor must not be able to change what you expose.
+
+The access password has exactly two actions: **view it**, and click **"New password"**. There is no
+"type your own" field and no current-password prompt: the value is a 32-character random string
+(~192 bits) generated **and checked by the machine running the Harness** — your server only forwards
+traffic and never sees or stores it. One click replaces it, every old link / QR code / signed-in
+browser dies at once, and the new value is shown once. Passwords are unique across the whole machine
+(the access password plus every tenant key), and even a value that was **rotated away** is never issued
+again — see [`docs/self-host.md` §4.7/§4.8](docs/self-host.md).
 
 ---
 
@@ -295,6 +303,7 @@ bin/dsh-remote.js              CLI entry (serve / check / doctor / snippets / ke
 lib/index.js                   DSH plugin host half: routes, in-process proxy and tunnel, lifecycle
 lib/client.js                  DSH plugin client half: hand-written bundle (no build step), sidebar entry + panel
 lib/core/proxy.js              Reverse proxy core: Host rewrite, token injection, mobile adaptation, key gate
+lib/core/keypool.js            Password pool: one machine-wide namespace (no two equal, retired values never re-issued)
 lib/core/tunnel.js             ssh -R / cloudflared supervision with exponential backoff; tailscale funnel start/stop
 lib/core/tailscale.js          tailscale funnel argv, status parsing and error classification (pure + testable)
 lib/core/messages.js           zh/en catalog for host-generated text (preflight, tunnel state, API errors, CLI)
@@ -302,7 +311,7 @@ lib/core/preflight.js          DNS / TLS / HTTPS+auth / ssh tunnel checks
 lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
-test/verify.mjs                Contract / render / generator assertions
+test/verify.mjs                Contract / render / generator assertions (220 of them)
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository
 ```
