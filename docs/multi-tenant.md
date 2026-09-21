@@ -118,7 +118,17 @@ be orphaned the moment that command returned.
 ```
 
 Hand-editing is fine: invalid entries are reported and skipped (the plugin still boots), and
-duplicate ids or duplicate access keys are rejected so two tenants can never share a key.
+duplicate ids or duplicate access keys are rejected.
+
+**Uniqueness is machine-wide, not just between tenants** — the ledger lives in
+`$DSH_HOME/remote-connect/keys-used.json` (0600, sha256 16-hex fingerprints only): a tenant key cannot
+equal the access password, and cannot reuse any value that was rotated away and **retired**. A collision
+is handled by regenerating on the spot, not by failing at write time. See
+[`self-host.md` §4.8](self-host.md).
+
+One-to-one is a hard constraint too: **one password maps to exactly one Harness**. Under the
+multi-tenant gateway the access password cannot open any tenant's instance (`test/verify.mjs` has a
+regression assertion), and one tenant's token against another tenant's instance returns `401`.
 
 ---
 
@@ -128,9 +138,9 @@ duplicate ids or duplicate access keys are rejected so two tenants can never sha
 | --- | --- |
 | Where do I see what a tenant's instance is doing? | `<tenant home>/instance.log` (its stdout/stderr), and the per-tenant state in the panel |
 | A tenant's instance keeps crashing | the supervisor retries with exponential backoff, then stops and shows the last error instead of looping forever |
-| I rotated a key | old `?k=` links stop working immediately; already-issued cookies for that tenant stop matching |
+| I rotated someone's password | click "New password" on their row: their old `?k=` link stops working immediately and their issued cookies stop matching. Nobody else is affected |
 | I removed a tenant | the instance is stopped and unregistered; **their data directory is not deleted** |
 | Two people on one laptop | one browser profile each (the cookie decides the tenant) |
-| Public entry | each tenant gets `https://<your-domain>/?k=<their key>`; the edge password still applies to everyone |
+| Public entry | each tenant gets `https://<your-domain>/?k=<their key>`; if you also enabled nginx's edge password, that layer applies to everyone equally (it is a gate, not an identity) |
 | Can a tenant reach another tenant's instance? | no: the gateway only ever connects to the upstream resolved from *that* request's cookie, and instances accept only their own token |
 | Do tenants share my API credentials? | no — by design each instance has its own credentials file. Give them their own key, or copy yours deliberately if you want to pay for them |

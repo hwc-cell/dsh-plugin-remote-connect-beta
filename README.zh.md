@@ -104,7 +104,7 @@ Harness 进程，各自的 `DSH_HOME`、端口、启动令牌，网关按访问�
 | 令牌获取（不抓日志） | ✅ 优先官方 `connection.authenticatedUrl()`（惰性等它挂载）；日志兜底**只认端口一致的启动行**，避免拿到别的进程的令牌 |
 | 凭据零落盘 | ✅ `?k=` 不进日志（模板默认脱敏）；仓库内无任何密钥 |
 | 配置校验 | ✅ 导出 `Config`（零依赖 Standard Schema）：端口越界/域名非法/tunnel 取值未知在**装载前**就报错；不引 `schemastery`，因为 profile 目录解析不到它 |
-| 面板双语 | ✅ zh/en 各 29 键 + `locale` 软依赖（缺 locale 时用 key 兜底）；槽位注册带命名空间 |
+| 面板双语 | ✅ zh/en 各 66 键 + `locale` 软依赖（缺 locale 时用 key 兜底）；槽位注册带命名空间 |
 | 证书"线上生效性" | ✅ 两条路：安装脚本 `verify_live_cert` 现场比对 + 打印 `--expect-cert-sha256`，`doctor` 从外部核对线上发的是不是服务器上那张 |
 
 ---
@@ -175,6 +175,11 @@ npm install dsh-plugin-remote-connect-beta
 侧栏「设置」上方出现「远程连接」，点开即可开关、看地址、扫码、复制服务器配置、跑前置检查。
 
 > 面板里的**开关只在宿主机窗口可用**（Host 为 loopback 且不经代理）。经局域网/公网打开时面板只能看状态——这是有意的：远程访客不该能改动宿主机的暴露面。
+>
+> **访问口令只有两个动作：看、以及点「换一个新口令」。** 没有"手输新口令"，也不用先输入旧口令：
+> 口令是本机生成的 32 位随机串（约 192 位熵），点一下就换掉，旧链接/旧二维码/已登录的浏览器立刻全部失效，
+> 新口令只显示一次。全机（本机口令 + 每个租户的口令）两两不重复，连**换掉过的旧值**也不会再发出去 —— 见
+> [`docs/self-host.zh.md` §4.7/§4.8](docs/self-host.zh.md)。
 
 ---
 
@@ -301,6 +306,7 @@ bin/dsh-remote.js        CLI 入口（serve / check / snippets / keygen）
 lib/index.js             DSH 插件 host 半：路由、开关、生命周期（进程内跑代理）
 lib/client.js            DSH 插件 client 半：侧栏入口 + 面板（手写 bundle，无构建步骤）
 lib/core/proxy.js        代理核心：Host 改写、令牌注入、手机适配、访问密钥门
+lib/core/keypool.js      口令池：本机唯一的口令命名空间（谁都不能撞谁，退休的旧值不再发）
 lib/core/tunnel.js       ssh -R / cloudflared 隧道看护（指数退避重连）+ tailscale funnel 启停
 lib/core/tailscale.js    tailscale funnel 的 argv、状态解析与报错分类（纯函数、可单测）
 lib/core/messages.js     宿主侧文案目录（前置检查 / 隧道状态 / 接口错误 / CLI）
@@ -308,7 +314,7 @@ lib/core/preflight.js    DNS / TLS / HTTPS+口令 / ssh 隧道 检查
 lib/core/snippets.js     nginx / Caddy / authorized_keys 配置生成
 lib/core/serversetup.js  服务器安装脚本生成（含输入校验防注入）
 lib/core/assets/         服务器安装脚本模板（真实 bash，产出必须过 bash -n）
-test/verify.mjs          冒烟测试（两半的真实契约，37 项断言）
+test/verify.mjs          冒烟测试（两半的真实契约，220 项断言）
 ```
 
 ---
@@ -316,7 +322,7 @@ test/verify.mjs          冒烟测试（两半的真实契约，37 项断言）
 ## 验证
 
 ```bash
-npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 68 项）
+npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 220 项）
 bash test/e2e-isolated.sh         # 端到端：拉一个隔离的 DSH 实例把本插件装进去
 bash test/no-private-values.sh    # 门禁：仓库里不得出现作者私有值
 ```

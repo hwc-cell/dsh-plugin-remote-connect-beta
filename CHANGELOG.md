@@ -2,6 +2,41 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.3] - 2026-09-21
+
+One password per person, one button to rotate it. The access password is now a machine-issued token
+from a machine-wide pool, and the panel no longer asks you to type or remember anything.
+
+### Changed
+
+- **The manual "change password" form is gone.** The panel used to offer current/new/confirm fields
+  plus "Change" and "Reset (I forgot it)". That whole path — including the `POST /access-key/verify`
+  current-password check — has been removed. What is left is one button, **"New password"**, which
+  generates a fresh value on this machine, bumps the key epoch (every old link, QR code and signed-in
+  browser stops matching) and shows the new value once. Rotating needs no old password; the entry point
+  is still host-window-only (`requireLocalControl`) and still needs an explicit confirmation.
+- `POST /access-key/rotate` now honours `{"acknowledge": true}` and **ignores** any `password` /
+  `current` / `confirm` / `reset` field: values are generated locally, never accepted from a caller.
+- **Passwords are unique across the whole machine, and one password maps to one Harness.** New
+  `lib/core/keypool.js` keeps the ledger (`$DSH_HOME/remote-connect/keys-used.json`, 0600, sha256
+  16-hex fingerprints only) shared by the access password and every tenant key: no two active
+  passwords are equal, a **retired** value (one that was rotated away) can never be issued again, and a
+  collision is resolved by regenerating during generation rather than failing at write time. The
+  registry now refuses a tenant key that equals the access password, not just one that duplicates
+  another tenant.
+- Access passwords are now generated as 32 URL-safe characters (~192 bits) instead of a six-word
+  passphrase. Nothing is typed by hand any more, so "easy to type on a phone" stopped being a virtue;
+  links are copied or forwarded instead. (The edge password on your server is unaffected — it is still
+  a passphrase, because that one *is* typed.)
+- Tenant keys move from the tenant registry's own de-duplication to the shared pool, so rotating a
+  tenant key also retires the old value.
+
+### Fixed
+
+- The panel's and `/_dsh/health`'s "key fingerprint" was the first 8 and last 4 plaintext characters of
+  the key, dressed up as a fingerprint. It is now a real sha256 16-hex fingerprint — as both
+  `docs/self-host.md` §4.8 and the UI claimed, and as "only fingerprints are stored" always implied.
+
 ## [0.1.0-beta.2] - 2026-09-19
 
 Documentation-only release: both READMEs now lead with a Risks section (what each entry exposes —
