@@ -176,7 +176,8 @@ Panel switches work **only in the host window** (loopback, not through a proxy);
 
 The access password has exactly two actions: **view it**, and click **"New password"**. There is no
 "type your own" field and no current-password prompt: the value is a 32-character random string
-(~192 bits) generated on this machine, one click replaces it, every old link / QR code / signed-in
+(~192 bits) generated **and checked by the machine running the Harness** — your server only forwards
+traffic and never sees or stores it. One click replaces it, every old link / QR code / signed-in
 browser dies at once, and the new value is shown once. Passwords are unique across the whole machine
 (the access password plus every tenant key), and even a value that was **rotated away** is never issued
 again — see [`docs/self-host.md` §4.7/§4.8](docs/self-host.md).

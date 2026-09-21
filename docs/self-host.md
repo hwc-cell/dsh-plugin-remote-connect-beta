@@ -221,7 +221,9 @@ that keeps replaying an old password can pile up 401s and trip your provider's r
 The plugin's own access password (the `?k=` in the link) is a **machine-issued credential**, and there
 is exactly one thing you can do with it in the panel:
 
-1. Click **"New password"** → this machine generates a fresh one (32 URL-safe characters, ~192 bits);
+1. Click **"New password"** → the machine running the Harness generates a fresh one and checks every
+   request against it itself (32 URL-safe characters, ~192 bits); your server only forwards traffic and
+   never sees or stores it;
 2. the key epoch is bumped, so **every old link, QR code and already-signed-in browser stops working**
    immediately and whoever you shared a link with needs the new one;
 3. the confirmation dialog says so before it happens, and the new value is **shown once** afterwards

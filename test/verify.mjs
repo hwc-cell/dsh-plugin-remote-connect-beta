@@ -309,6 +309,28 @@ check(
     ? Object.keys(registeredLocales[0].dicts.zh).length + ' 键'
     : '未注册',
 )
+// 面板与终端都是**纯文本渲染**（没有 markdown 渲染器）：写进文案里的 `**强调**` 或反引号
+// 会原样显示成星号和反引号 —— 真实踩过两次，所以在这里钉一条回归断言。
+const copyLeaks = []
+for (const [locale, dict] of Object.entries(registeredLocales[0].dicts)) {
+  for (const [key, value] of Object.entries(dict)) {
+    if (/`|\*\*/.test(String(value))) copyLeaks.push('client.' + locale + '.' + key)
+  }
+}
+for (const file of ['lib/core/messages.js']) {
+  const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n')
+  lines.forEach((line, index) => {
+    // 形如 'some.key': '……' 的文案行；CLI 用法里的 --password *** 是占位符，不算
+    if (/^\s*'[A-Za-z0-9._]+':\s*'/.test(line) && /`|\*\*/.test(line) && /password \*\*\*/.test(line) === false) {
+      copyLeaks.push(file + ':' + String(index + 1))
+    }
+  })
+}
+check(
+  '文案不许出现 markdown 记号（面板/终端是纯文本渲染，"**" 会原样显示成星号）',
+  copyLeaks.length === 0,
+  copyLeaks.join(', '),
+)
 check(
   'client: 槽位注册带 locale 命名空间',
   registrations.every((item) => item.options.locale === 'remote-connect'),
