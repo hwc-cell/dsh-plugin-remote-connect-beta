@@ -1599,12 +1599,21 @@ check(
 const unusable = await rawRequest(HOST + String(gateInfo.port) + '/?k=' + 'a'.repeat(32), {
   headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
 })
+// 现在的生成器给的是 32 位 base64url（可能不含纯十六进制字符）：也必须判成"已失效"而不是"抄错了"
+const unusableB64 = await rawRequest(HOST + String(gateInfo.port) + '/?k=' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6', {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
 check(
   'gate: 形如我们发出去的旧密钥（32 位十六进制）与"抄错了"是两种可区分的失败',
   unusable.status === 404 &&
     unusable.headers['x-dsh-reason'] === 'key-unusable' &&
     unusable.body.includes('访问密钥已经失效'),
   'reason=' + String(unusable.headers['x-dsh-reason']),
+)
+check(
+  'gate: base64url 形态的旧口令同样判为 key-unusable（生成器换过形态，别把真失效判成抄错）',
+  unusableB64.status === 404 && unusableB64.headers['x-dsh-reason'] === 'key-unusable',
+  'reason=' + String(unusableB64.headers['x-dsh-reason']),
 )
 const health = await rawRequest(HOST + String(gateInfo.port) + '/_dsh/health')
 check(
