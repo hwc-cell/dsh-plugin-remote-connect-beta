@@ -234,6 +234,9 @@ The plugin's own access password (the `?k=` in the link) cannot be changed with 
 
 The password never appears in `argv`, logs, telemetry or the UI after submission.
 
+The access key is generated **and checked by the machine running the Harness**; your server only
+forwards traffic and never sees or stores it. That is why rotating it needs no server change at all.
+
 ### 4.8 A password that is already in use is refused
 
 A password is a credential, not a name, so the same value must not be shared by two identities — and
