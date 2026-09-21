@@ -216,49 +216,45 @@ travelled over stdin — never in `argv`, `ps` output or shell history.
 After rotating, delete the old password from your browser/password manager before retrying: a browser
 that keeps replaying an old password can pile up 401s and trip your provider's rate limiting.
 
-### 4.7 Rotating the access password: one button, no current password, no typing
+### 4.7 Changing the access password requires the current one
 
-The plugin's own access password (the `?k=` in the link) is a **machine-issued credential**, and there
-is exactly one thing you can do with it in the panel:
+The plugin's own access password (the `?k=` in the link) cannot be changed with one click:
 
-1. Click **"New password"** → the machine running the Harness generates a fresh one and checks every
-   request against it itself (32 URL-safe characters, ~192 bits); your server only forwards traffic and
-   never sees or stores it;
-2. the key epoch is bumped, so **every old link, QR code and already-signed-in browser stops working**
-   immediately and whoever you shared a link with needs the new one;
-3. the confirmation dialog says so before it happens, and the new value is **shown once** afterwards
-   (copy it into your password manager, or just forward the new link);
-4. every rotation appends one line to `$DSH_HOME/remote-connect/audit.log` (time and event only —
-   never the password).
+1. The panel asks for **current password + new password + confirmation**, checks them locally
+   (at least 12 characters, both new entries equal, new differs from current), then posts the current
+   password to `POST /access-key/verify`.
+2. Only if that verification passes does it call `POST /access-key/rotate`, which writes the new value,
+   bumps the key epoch (every issued cookie stops matching) and invalidates every old link and QR code.
+   A failed verification writes nothing, so a wrong "current password" can never leave you locked out.
+3. Five consecutive failures put the entry into a five-minute cooldown, and each failure is written to
+   `$DSH_HOME/remote-connect/audit.log` (time and event only — never the password).
+4. **Reset** is a separate, deliberately degraded path for "I forgot it": no current password is
+   required, but it must be confirmed explicitly (the panel says so), it invalidates old links and
+   sessions, and it leaves an audit line.
 
-**Why "type your own new password" and "verify the current one first" were removed**: letting people
-invent a password ends in `dsh123456`, and "I forgot the current one" forces a back door that skips
-verification. Neither is needed — the password is a segment of a link you hand out; users are not
-supposed to memorise it. The real gate is that only the host window may call this endpoint
-(`requireLocalControl`, enforced on the server side too), plus one explicit confirmation (which guards
-against both a slip of the hand and a request someone talked you into).
+The password never appears in `argv`, logs, telemetry or the UI after submission.
 
-**API change**: `POST /access-key/verify` (current-password check) is **gone** and now returns 404.
-`POST /access-key/rotate` still exists, but its body only honours `{"acknowledge": true}`:
-**any `password` / `current` / `confirm` / `reset` field is ignored** — the value is always generated here.
+The access key is generated **and checked by the machine running the Harness**; your server only
+forwards traffic and never sees or stores it. That is why rotating it needs no server change at all.
 
-### 4.8 Passwords are unique across the machine, and one password maps to one Harness
+### 4.8 A password that is already in use is refused
 
-This machine holds more than one password: the access password plus one per tenant (see
-[`multi-tenant.md`](multi-tenant.md)). Two invariants are enforced **before generation** by
-`lib/core/keypool.js`, with its ledger in `$DSH_HOME/remote-connect/keys-used.json` (mode 0600, atomic
-writes):
+A password is a credential, not a name, so the same value must not be shared by two identities — and
+reusing your own previous password means "nothing actually changed" while you believe it did. Before
+writing, the plugin checks the candidate against the current key **and** against the SHA-256
+fingerprints of every key that has been active (stored as 16-hex prefixes; the plaintext of old keys is
+never kept). A hit is refused with "this password is already in use, pick another" — it never says
+whose it is. The check happens only **after** the current password was verified (otherwise the endpoint
+would be an oracle for "is anyone using this password?") and it shares one lock with the write, so two
+concurrent changes cannot both pass.
 
-1. **No two passwords are ever equal** — including values that were already rotated away and retired
-   (a retired value can never be handed to anyone again);
-2. **one password belongs to exactly one upstream**: the access password reaches only the local Harness,
-   a tenant's password only that tenant's own instance. Under the multi-tenant gateway the access
-   password **cannot** open any tenant's Harness (`test/verify.mjs` has a regression assertion).
+### 4.9 One key namespace per machine
 
-The ledger stores **sha256 16-hex fingerprints only**, never plaintext; a collision is handled by
-**regenerating on the spot** (retry during generation) instead of failing after you submit. Editing the
-registry by hand gets you nowhere either: duplicate keys, or a key equal to the access password, are
-reported per entry and skipped.
+Every password this plugin hands out — the local access key and each tenant's key — comes from one
+pool, and no two of them are ever equal, including **keys that have already been retired**. The pool
+stores only SHA-256 prefixes (16 hex characters) in `$DSH_HOME/remote-connect/keys-used.json`
+(mode 0600, newest 500 kept), so the file cannot leak a usable key; active keys are also compared in
+constant time, so a change that would collide with a tenant's key is refused as well.
 
 ## 5. The tunnel account
 

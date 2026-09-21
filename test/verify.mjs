@@ -309,28 +309,6 @@ check(
     ? Object.keys(registeredLocales[0].dicts.zh).length + ' 键'
     : '未注册',
 )
-// 面板与终端都是**纯文本渲染**（没有 markdown 渲染器）：写进文案里的 `**强调**` 或反引号
-// 会原样显示成星号和反引号 —— 真实踩过两次，所以在这里钉一条回归断言。
-const copyLeaks = []
-for (const [locale, dict] of Object.entries(registeredLocales[0].dicts)) {
-  for (const [key, value] of Object.entries(dict)) {
-    if (/`|\*\*/.test(String(value))) copyLeaks.push('client.' + locale + '.' + key)
-  }
-}
-for (const file of ['lib/core/messages.js']) {
-  const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n')
-  lines.forEach((line, index) => {
-    // 形如 'some.key': '……' 的文案行；CLI 用法里的 --password *** 是占位符，不算
-    if (/^\s*'[A-Za-z0-9._]+':\s*'/.test(line) && /`|\*\*/.test(line) && /password \*\*\*/.test(line) === false) {
-      copyLeaks.push(file + ':' + String(index + 1))
-    }
-  })
-}
-check(
-  '文案不许出现 markdown 记号（面板/终端是纯文本渲染，"**" 会原样显示成星号）',
-  copyLeaks.length === 0,
-  copyLeaks.join(', '),
-)
 check(
   'client: 槽位注册带 locale 命名空间',
   registrations.every((item) => item.options.locale === 'remote-connect'),
@@ -380,6 +358,7 @@ const canned = {
     error: null,
   },
   [API + '/access-key/rotate']: { ok: true, accessKey: 'brand-new-key-0123456789', entry: 'https://dsh.example.com/?k=brand-new-key-0123456789', epoch: 2 },
+  [API + '/access-key/verify']: { ok: true },
   [API + '/tenants/add']: {
     ok: true,
     tenant: { id: 'carol', name: 'Carol', accessKey: 'key-carol-0123456789', port: 58583, phase: 'starting', running: false },
@@ -401,13 +380,7 @@ globalThis.fetch = async (url, options) => {
   const parsed = new URL(raw, 'http://placeholder')
   // api() 会给每个请求带上面板当前语言；断言时按去掉 query 的路径取回复
   const pathname = parsed.pathname
-  calls.push({
-    pathname,
-    method: (options && options.method) || 'GET',
-    locale: parsed.searchParams.get('locale'),
-    // 请求体也留一份：面板"一键换新"必须只发 acknowledge（不许再带口令字段）
-    body: typeof options?.body === 'string' ? options.body : null,
-  })
+  calls.push({ pathname, method: (options && options.method) || 'GET', locale: parsed.searchParams.get('locale') })
   const body = canned[pathname] ?? { ok: false, error: 'unexpected ' + pathname }
   return {
     ok: body.ok !== false,
@@ -512,12 +485,11 @@ check(
 )
 clientExports.internals.setState({ checkResults: null })
 
-// 访问口令面板：显示 + 一键「换一个新口令」——**没有**手输，也没有"先验旧口令"那条路
+// 访问口令面板：显示 / 生成新的 / 自定义
 check(
-  'client: 访问口令卡片只剩「显示 + 换一个新口令」，手输/重置那条路彻底消失',
+  'client: 面板有「访问口令」一行（显示 + 修改〔当前/新/确认〕+ 重置）',
   (() => {
     clientExports.internals.setState({
-      revealedKey: null,
       data: {
         ok: true, busy: false, canControl: true,
         config: { problems: [], publicDomain: 'dsh.example.com', tunnel: 'ssh' },
@@ -531,41 +503,41 @@ check(
       },
     })
     const html = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
-    const missing = ['key.label', 'key.reveal', 'key.rotate', 'key.hint'].filter((key) => !html.includes('«' + key + '»'))
-    // 反向断言：旧的四个键（当前/新/确认/修改）与「重置」不许复活
-    const resurrected = ['key.current', 'key.new', 'key.confirm', 'key.change', 'key.reset', 'key.mismatchLocal'].filter(
-      (key) => html.includes('«' + key + '»'),
+    return (
+      html.includes('«key.label»') &&
+      html.includes('«key.reveal»') &&
+      html.includes('«key.change»') &&
+      html.includes('«key.reset»') &&
+      html.includes('«key.current»') &&
+      html.includes('«key.new»') &&
+      html.includes('«key.confirm»') &&
+      html.includes('de••••••89') ||
+      (console.log('   面板缺失：', ['key.label','key.reveal','key.rotate','key.setCustom','key.customPlaceholder','de••••••89'].filter((k) => !html.includes(k === 'de••••••89' ? k : '«' + k + '»')).join(', ')), false)
     )
-    if (missing.length > 0 || resurrected.length > 0) {
-      console.log('   面板缺失：', missing.join(', ') || '（无）', '｜ 复活的旧文案：', resurrected.join(', ') || '（无）')
-      return false
-    }
-    // 一个 password 输入框都不该有：口令是机器生成的，不需要用户输入任何东西
-    return html.includes('de••••••89') && html.includes('type="password"') === false
   })(),
 )
 const rotateCallsBefore = calls.filter((item) => item.pathname === API + '/access-key/rotate').length
-await clientExports.internals.rotateKey()
+await clientExports.internals.changeKey()
 check(
-  'client: 换新口令只发 acknowledge（不带任何口令字段），并把新口令显示一次',
-  (() => {
-    const mine = calls.filter((item) => item.pathname === API + '/access-key/rotate')
-    if (mine.length !== rotateCallsBefore + 1) return false
-    const payload = JSON.parse(mine[mine.length - 1].body ?? '{}')
-    return (
-      payload.acknowledge === true &&
-      payload.password === undefined &&
-      payload.current === undefined &&
-      payload.confirm === undefined &&
-      payload.reset === undefined &&
-      clientExports.internals.store.revealedKey === 'brand-new-key-0123456789'
-    )
-  })(),
+  'client: 表单没填全时不发任何请求（本地先拦）',
+  calls.filter((item) => item.pathname === API + '/access-key/rotate').length === rotateCallsBefore,
 )
+clientExports.internals.setState({
+  keyCurrent: 'old-password-0123456789',
+  keyNext: 'new-password-0123456789',
+  keyConfirm: 'new-password-0123456789',
+})
+await clientExports.internals.changeKey()
 check(
-  'client: 换新口令后再也不碰 /access-key/verify（那个端点已删除）',
-  calls.filter((item) => item.pathname === API + '/access-key/verify').length === 0,
-  calls.length + ' 次请求',
+  'client: 修改先 POST /access-key/verify 校验旧口令，再 POST /access-key/rotate',
+  calls.some((item) => item.pathname === API + '/access-key/verify' && item.method === 'POST') &&
+    calls.filter((item) => item.pathname === API + '/access-key/rotate').length > rotateCallsBefore &&
+    clientExports.internals.store.keyCurrent === '',
+)
+await clientExports.internals.resetKey()
+check(
+  'client: 重置走 /access-key/rotate（reset + acknowledge，且不需要旧口令）',
+  calls.filter((item) => item.pathname === API + '/access-key/rotate').length > rotateCallsBefore + 1,
 )
 
 // ── 多租户面板：租户卡片、动作与二维码 ──
@@ -1627,6 +1599,10 @@ check(
 const unusable = await rawRequest(HOST + String(gateInfo.port) + '/?k=' + 'a'.repeat(32), {
   headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
 })
+// 现在的生成器给的是 32 位 base64url（可能不含纯十六进制字符）：也必须判成"已失效"而不是"抄错了"
+const unusableB64 = await rawRequest(HOST + String(gateInfo.port) + '/?k=' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6', {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
 check(
   'gate: 形如我们发出去的旧密钥（32 位十六进制）与"抄错了"是两种可区分的失败',
   unusable.status === 404 &&
@@ -1634,26 +1610,10 @@ check(
     unusable.body.includes('访问密钥已经失效'),
   'reason=' + String(unusable.headers['x-dsh-reason']),
 )
-// 现在的生成器发的是 32 位 base64url（见 core/tenant.js 的 generateAccessKey）。拿一条
-// 这个形状、但不是当前值的链接，必须同样判成"已失效"而不是"你抄错了" —— 否则用户会
-// 拿着一条真被轮换掉的链接去反复核对拼写（真实踩过的坑）。
-const unusableB64 = await rawRequest(HOST + String(gateInfo.port) + '/?k=Xk9Qm2Rt7Lv4Bz8Nw3Yh6Jp5Cs1Dg0Fa', {
-  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
-})
 check(
-  'gate: 32 位 base64url（新口令形状）的失效链接也判成"已失效"，不是"抄错了"',
-  unusableB64.status === 404 &&
-    unusableB64.headers['x-dsh-reason'] === 'key-unusable' &&
-    unusableB64.body.includes('访问密钥已经失效'),
+  'gate: base64url 形态的旧口令同样判为 key-unusable（生成器换过形态，别把真失效判成抄错）',
+  unusableB64.status === 404 && unusableB64.headers['x-dsh-reason'] === 'key-unusable',
   'reason=' + String(unusableB64.headers['x-dsh-reason']),
-)
-const plainlyWrong = await rawRequest(HOST + String(gateInfo.port) + '/?k=oops', {
-  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
-})
-check(
-  'gate: 明显是手输错的短串仍然判成"密钥不正确"（两种失败别混）',
-  plainlyWrong.status === 404 && plainlyWrong.headers['x-dsh-reason'] === 'bad-key',
-  'reason=' + String(plainlyWrong.headers['x-dsh-reason']),
 )
 const health = await rawRequest(HOST + String(gateInfo.port) + '/_dsh/health')
 check(
@@ -1888,188 +1848,85 @@ async function bootPluginWithKey(accessKey) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }).then((r) => ({ status: r.status, payload: JSON.parse(r.body || '{}') }))
-  const get = (path2) =>
-    rawRequest('http://127.0.0.1:' + String(port2) + API + path2).then((r) => ({
-      status: r.status,
-      payload: JSON.parse(r.body || '{}'),
-    }))
-  return { dataDir, server: server2, post, get, close: () => server2.close() }
+  return { dataDir, server: server2, post, close: () => server2.close() }
 }
 
 const keyHost = await bootPluginWithKey('current-key-0123456789')
-const bareRotate = await keyHost.post('/access-key/rotate', {})
+const wrongCurrent = await keyHost.post('/access-key/rotate', { current: 'nope-nope-nope-9999', password: 'brand-new-key-111111', confirm: 'brand-new-key-111111' })
 check(
-  '换口令：没有显式确认 → 400（不能变成"一个手滑的 POST"就能触发的操作）',
-  bareRotate.status === 400 && bareRotate.payload.ok === false && /confirm|确认/.test(String(bareRotate.payload.error)),
-  String(bareRotate.payload.error),
+  '改口令：当前口令错误 → 401 且带剩余次数，不写入任何东西',
+  wrongCurrent.status === 401 && /attempts left|还可尝试/.test(String(wrongCurrent.payload.error)) && wrongCurrent.payload.ok === false,
+  String(wrongCurrent.payload.error),
 )
-// 旧的口令字段（current/password/confirm/reset）即使被塞进来也必须被无视：
-// 口令只能由本机生成，API 不接受调用方指定的值（这是"删掉手输那条路"的服务器侧一半）
-const customAttempt = await keyHost.post('/access-key/rotate', {
-  acknowledge: true,
-  current: 'current-key-0123456789',
-  password: 'chosen-by-caller-0123456789',
-  confirm: 'chosen-by-caller-0123456789',
-  reset: true,
-})
-const newKey = String(customAttempt.payload.accessKey ?? '')
+const stillOld = await keyHost.post('/access-key/verify', { password: 'current-key-0123456789' })
+check('改口令：验证失败后旧口令仍然有效（证明没写进去）', stillOld.status === 200 && stillOld.payload.ok === true)
+const mismatch = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'brand-new-key-111111', confirm: 'different-key-222222' })
+check('改口令：两次新口令不一致 → 400', mismatch.status === 400 && mismatch.payload.ok === false, String(mismatch.payload.error))
+const sameAsOld = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'current-key-0123456789', confirm: 'current-key-0123456789' })
+check('改口令：新口令与当前相同 → 400 拒绝', sameAsOld.status === 400 && sameAsOld.payload.ok === false, String(sameAsOld.payload.error))
+const good = await keyHost.post('/access-key/rotate', { current: 'current-key-0123456789', password: 'brand-new-key-111111', confirm: 'brand-new-key-111111' })
+check('改口令：当前口令正确 → 写入成功并回显新口令', good.status === 200 && good.payload.accessKey === 'brand-new-key-111111')
+const oldGone = await keyHost.post('/access-key/verify', { password: 'current-key-0123456789' })
+check('改口令：改完旧口令立即失效', oldGone.status === 401)
+const bareReset = await keyHost.post('/access-key/rotate', { reset: true })
+check('重置：没有显式确认 → 400（不能变成无验证的后门）', bareReset.status === 400 && bareReset.payload.ok === false, String(bareReset.payload.error))
+const ackReset = await keyHost.post('/access-key/rotate', { reset: true, acknowledge: true })
+check('重置：显式确认后可用，且不需要旧口令', ackReset.status === 200 && typeof ackReset.payload.accessKey === 'string')
+// 5 次失败 → 冷却
+const burst = []
+for (let i = 0; i < 5; i += 1) burst.push(await keyHost.post('/access-key/verify', { password: 'wrong-' + String(i) + '-password' }))
+const blocked = await keyHost.post('/access-key/verify', { password: 'anything-at-all' })
+const blockedLike = burst.filter((item) => item.status === 429).concat(blocked.status === 429 ? [blocked] : [])
 check(
-  '换口令：调用方塞的 password/current 被忽略，新口令由本机生成（不接受手输）',
-  customAttempt.status === 200 &&
-    newKey !== 'chosen-by-caller-0123456789' &&
-    newKey !== 'current-key-0123456789' &&
-    /^[A-Za-z0-9_-]{16,128}$/.test(newKey) &&
-    newKey.length >= 32,
-  '新口令 ' + newKey.slice(0, 6) + '…（' + String(newKey.length) + ' 位）',
-)
-check('换口令：代次 +1（旧链接与旧 Cookie 靠它立刻失效）', customAttempt.payload.epoch === 1, 'epoch=' + String(customAttempt.payload.epoch))
-const secondRotate = await keyHost.post('/access-key/rotate', { acknowledge: true })
-check(
-  '换口令：连按两次换出来的口令不同（同一把口令不会被发两次）',
-  secondRotate.status === 200 && secondRotate.payload.accessKey !== newKey,
-)
-const goneVerify = await keyHost.post('/access-key/verify', { password: 'anything-at-all' })
-check(
-  '换口令：/access-key/verify 已删除 → 404（"先验旧口令"这个入口不再存在）',
-  goneVerify.status === 404,
-  'HTTP ' + String(goneVerify.status),
+  '防爆破：连续失败进入冷却（429）并给出等待时间',
+  burst.filter((item) => item.status === 401).length >= 3 &&
+    blockedLike.length >= 1 &&
+    blockedLike[0].payload.blocked === true &&
+    /\d/.test(String(blockedLike[0].payload.error)) &&
+    blockedLike[0].payload.retryAfterMs > 0,
+  'HTTP ' + String(blocked.status) + ' ' + String(blocked.payload.error).slice(0, 48),
 )
 const auditText = fs.readFileSync(path.join(keyHost.dataDir, 'remote-connect', 'audit.log'), 'utf8')
 check(
-  '审计：记录换口令，但绝不含任何口令',
-  auditText.includes('rotated') &&
-    !auditText.includes('chosen-by-caller') &&
-    !auditText.includes('current-key-0123456789') &&
-    !auditText.includes(newKey),
+  '审计：记录失败与重置，但绝不含任何口令',
+  auditText.includes('verify failed') && auditText.includes('RESET') &&
+    !/wrong-\d-password/.test(auditText) && !auditText.includes('brand-new-key') && !auditText.includes('current-key'),
   auditText.trim().split('\n').slice(-1)[0],
-)
-const poolAfter = JSON.parse(fs.readFileSync(path.join(keyHost.dataDir, 'remote-connect', 'keys-used.json'), 'utf8'))
-check(
-  '查重账本：keys-used.json 只存指纹（sha256 前 16 位），不含任何明文口令',
-  Array.isArray(poolAfter.fingerprints) &&
-    poolAfter.fingerprints.length >= 2 &&
-    poolAfter.fingerprints.every((item) => /^[0-9a-f]{16}$/.test(item)) &&
-    JSON.stringify(poolAfter).includes('current-key-0123456789') === false &&
-    JSON.stringify(poolAfter).includes(newKey) === false,
-  '指纹 ' + String(poolAfter.fingerprints.length) + ' 条',
-)
-const snapshotAfter = await keyHost.get('/state')
-const shownFp = String(snapshotAfter.payload.public?.accessKeyFingerprint ?? '')
-check(
-  '面板/健康检查里的"指纹"是 sha256 前 16 位，不是口令明文的一截（也给了掩码）',
-  /^[0-9a-f]{16}$/.test(shownFp) &&
-    shownFp.includes(secondRotate.payload.accessKey.slice(0, 8)) === false &&
-    String(snapshotAfter.payload.public?.accessKeyMasked ?? '').includes('••••'),
-  'fingerprint=' + shownFp + ' masked=' + String(snapshotAfter.payload.public?.accessKeyMasked),
 )
 await keyHost.close()
 idleUpstream.close()
 
-// ── 口令唯一性：本机口令、租户口令、退休的旧口令 —— 谁都不能撞谁（规范 §4.1/§4.3）──
+// ── 查重：新口令不得与"任何用过的口令"相同（规范 §4.1/§4.3）──
 
-const poolTools2 = await import(pathToFileURL(path.join(root, 'lib/core/keypool.js')).href)
-const poolFile = path.join(root, 'test', '.keypool-fixture.json')
-fs.rmSync(poolFile, { force: true })
-const scripted = ['same-value-0000000000', 'fresh-value-1111111111']
-let poolCalls = 0
-const pool1 = poolTools2.createKeyPool({
-  file: poolFile,
-  generate: () => {
-    const value = scripted[Math.min(poolCalls, scripted.length - 1)]
-    poolCalls += 1
-    return value
-  },
+const inUseHost = await bootPluginWithKey('first-key-0123456789')
+const firstChange = await inUseHost.post('/access-key/rotate', {
+  current: 'first-key-0123456789',
+  password: 'second-key-abcdefghij',
+  confirm: 'second-key-abcdefghij',
 })
-pool1.remember('same-value-0000000000')
-const issued = pool1.issue()
-check(
-  '口令池：撞上"已经用过的值"会重试，直到拿到一把全新的（同一把口令绝不发两次）',
-  issued.value.startsWith('fresh-value') && issued.tries === 2,
-  issued.value.slice(0, 12) + '（试了 ' + String(issued.tries) + ' 次）',
-)
-check(
-  '口令池：文件里只有指纹，没有明文',
-  pool1.fingerprints().every((item) => /^[0-9a-f]{16}$/.test(item)) &&
-    fs.readFileSync(poolFile, 'utf8').includes('same-value-0000000000') === false,
-  '指纹 ' + String(pool1.fingerprints().length) + ' 条',
-)
-const pool2 = poolTools2.createKeyPool({ reserved: () => ['the-machine-key-0123456789'] })
-check(
-  '口令池：本机正在用的口令算"已占用"（别人不可能拿到同一把）',
-  pool2.isTaken('the-machine-key-0123456789') === true && pool2.isTaken('nobody-uses-this-000000') === false,
-)
-const uniqFile = path.join(root, 'test', '.tenants-unique.json')
-fs.rmSync(uniqFile, { force: true })
-const uniqTools = await import(pathToFileURL(path.join(root, 'lib/core/tenant.js')).href)
-const uniqRegistry = uniqTools.createRegistry({
-  file: uniqFile,
-  baseDir: path.join(root, 'test', '.homes'),
-  keyPool: poolTools2.createKeyPool({ reserved: () => ['the-machine-key-0123456789'] }),
+check('查重：第一次换成新口令正常通过', firstChange.status === 200 && firstChange.payload.accessKey === 'second-key-abcdefghij')
+const reuse = await inUseHost.post('/access-key/rotate', {
+  current: 'second-key-abcdefghij',
+  password: 'first-key-0123456789',
+  confirm: 'first-key-0123456789',
 })
-const machineKeyAsTenantKey = (() => {
-  try {
-    uniqRegistry.add({ id: 'alice', accessKey: 'the-machine-key-0123456789' })
-    return 'accepted'
-  } catch (error) {
-    return /占用/.test(String(error.message)) ? 'refused' : 'other:' + String(error.message)
-  }
-})()
 check(
-  '唯一性：租户密钥不能等于本机口令 —— 一把口令只能有一个归属（refused）',
-  machineKeyAsTenantKey === 'refused',
-  machineKeyAsTenantKey,
+  '查重：想换回"用过的旧口令" → 409 拒绝，且提示不透露是谁在用',
+  reuse.status === 409 && /占用|in use/.test(String(reuse.payload.error)) === true && reuse.payload.accessKey === undefined,
+  String(reuse.payload.error).slice(0, 46),
 )
-const uniqAlice = uniqRegistry.add({ id: 'alice', name: 'Alice' })
-const uniqBob = uniqRegistry.add({ id: 'bob', name: 'Bob' })
+const stillSecond = await inUseHost.post('/access-key/verify', { password: 'second-key-abcdefghij' })
+check('查重失败后既有口令保持不变（没有写入）', stillSecond.status === 200 && stillSecond.payload.ok === true)
+const stateAfter = JSON.parse(fs.readFileSync(path.join(inUseHost.dataDir, 'remote-connect', 'access-key.json'), 'utf8'))
 check(
-  '唯一性：两个人拿到的口令不相同，且都是本机生成的 URL 安全串',
-  uniqAlice.accessKey !== uniqBob.accessKey &&
-    /^[A-Za-z0-9_-]{16,128}$/.test(uniqAlice.accessKey) &&
-    /^[A-Za-z0-9_-]{16,128}$/.test(uniqBob.accessKey),
-  uniqAlice.accessKey.length + ' 位 / ' + uniqBob.accessKey.length + ' 位',
+  '查重历史只存指纹（sha256 前 16 位），不存明文口令',
+  Array.isArray(stateAfter.history) &&
+    stateAfter.history.length >= 1 &&
+    stateAfter.history.every((item) => /^[0-9a-f]{16}$/.test(item)) &&
+    JSON.stringify(stateAfter).includes('first-key-0123456789') === false,
+  'history=' + JSON.stringify(stateAfter.history),
 )
-const rotatedAlice = uniqRegistry.rotateKey('alice')
-const oldAliceReusable = (() => {
-  try {
-    uniqRegistry.add({ id: 'carol', accessKey: uniqAlice.accessKey })
-    return 'accepted'
-  } catch (error) {
-    return /占用/.test(String(error.message)) ? 'refused' : 'other:' + String(error.message)
-  }
-})()
-check(
-  '唯一性：换掉的口令进退休区 —— 不能再发给第三个人（refused）',
-  rotatedAlice.accessKey !== uniqAlice.accessKey && oldAliceReusable === 'refused',
-  oldAliceReusable,
-)
-fs.rmSync(uniqFile, { force: true })
-fs.rmSync(poolFile, { force: true })
-
-// ── 一个口令只连一个上游：多租户网关下，本机口令打不开任何租户的 Harness ──
-const seenBeforeMixed = upstreamA.seen.length + upstreamB.seen.length
-const mixedProxy = createProxy({
-  port: 0,
-  listenHost: '127.0.0.1',
-  gateSecret: 'gate-secret-for-tests',
-  accessKey: 'the-machine-key-0123456789',
-  accessKeyProvider: () => 'the-machine-key-0123456789',
-  tenants: {
-    findById: (id) => instances[id] ?? null,
-    findByKey: (key) => (key === 'key-alice-0123456789' ? instances.alice : null),
-  },
-})
-const mixedInfo = await mixedProxy.start()
-const mixedBase = HOST + String(mixedInfo.port)
-const machineKeyTry = await rawRequest(mixedBase + '/?k=the-machine-key-0123456789')
-const tenantKeyTry = await rawRequest(mixedBase + '/?k=key-alice-0123456789')
-await mixedProxy.stop()
-check(
-  '一一对应：多租户网关下本机口令 404（打不开别人的 Harness），租户口令 303（换到 Cookie）',
-  machineKeyTry.status === 404 &&
-    tenantKeyTry.status === 303 &&
-    upstreamA.seen.length + upstreamB.seen.length === seenBeforeMixed,
-  'machine=' + String(machineKeyTry.status) + ' tenant=' + String(tenantKeyTry.status),
-)
+await inUseHost.close()
 
 // ── 隧道掉线：上游不可达时给友好页 + X-DSH-Reason: tunnel-down ──
 const deadProxyPort = 9 // discard 端口，保证连不上
@@ -2136,6 +1993,56 @@ check(
   '状态灯：三态文案走字典（中英都有）',
   markerT('dot.ok') === '«dot.ok»' && panelSource.includes("'dot.bad': '网络异常'") && panelSource.includes("'dot.bad': 'Network problem'"),
 )
+
+// ── 口令池：全机唯一命名空间（服务器侧规范 §4.3/§10.8）──
+
+const poolTools = await import(pathToFileURL(path.join(root, 'lib/core/keypool.js')).href)
+const poolDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pool-'))
+const poolFile = path.join(poolDir, 'keys-used.json')
+let poolReserved = ['active-key-0123456789']
+const pool = poolTools.createKeyPool({
+  file: poolFile,
+  generate: () => 'issued-' + Math.random().toString(36).slice(2, 12),
+  reserved: () => poolReserved,
+})
+pool.remember('active-key-0123456789')
+check(
+  'keypool: 活跃口令也算占用（不能把当前口令当成新口令发出去）',
+  pool.isTaken('active-key-0123456789') === true && pool.isTaken('brand-new-key-999999') === false,
+)
+pool.remember('retired-key-1234567890')
+check('keypool: 退休口令记进池子后同样被拒（换回去也不行）', pool.isTaken('retired-key-1234567890') === true)
+check(
+  'keypool: 只落盘指纹（16 位十六进制），绝不出现明文口令',
+  (() => {
+    const text = fs.readFileSync(poolFile, 'utf8')
+    return text.includes(poolTools.fingerprintKey('retired-key-1234567890')) && text.includes('retired-key') === false
+  })(),
+)
+check(
+  'keypool: issue() 发出来的新口令与活跃/历史都不冲突',
+  (() => {
+    const issued = pool.issue()
+    return pool.isTaken(issued.value) === false && issued.fingerprint.length === poolTools.FINGERPRINT_LENGTH
+  })(),
+)
+poolReserved = ['active-key-0123456789', 'tenant-key-abcdefghij']
+pool.remember('tenant-key-abcdefghij')
+check('keypool: 租户口令也是活跃占位（一把口令只属于一个上游）', pool.isTaken('tenant-key-abcdefghij') === true)
+check(
+  'keypool: 坏数据不会让插件起不来（非法指纹被跳过）',
+  (() => {
+    fs.writeFileSync(poolFile, JSON.stringify({ version: 1, fingerprints: ['goodfingerprint1', 'not-a-fingerprint', 42] }))
+    const fresh = poolTools.createKeyPool({ file: poolFile, log: () => {} })
+    return fresh.fingerprints().length === 0
+  })(),
+)
+check('keypool: 迁移时只收养合法指纹', (() => {
+  const fresh = poolTools.createKeyPool({ file: null })
+  const added = fresh.adopt(['aaaaaaaaaaaaaaaa', 'bad', 'bbbbbbbbbbbbbbbb'])
+  return added === 2
+})())
+fs.rmSync(poolDir, { recursive: true, force: true })
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

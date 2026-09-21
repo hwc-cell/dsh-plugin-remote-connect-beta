@@ -51,6 +51,12 @@ untouched on purpose), or straight from the repository.
 
 ### Added
 
+- A single key namespace per machine (`lib/core/keypool.js`, from the server side's spec): the local
+  access key and every tenant key come from one pool, no two are equal — including retired values —
+  and only SHA-256 16-hex fingerprints are persisted (`keys-used.json`, 0600, newest 500). Active keys
+  are compared in constant time too, so a new value that collides with a tenant's key is refused.
+
+
 - Dark mode: the panel and the host-side failure pages follow `prefers-color-scheme` (theme
   variables first, dark fallbacks when a variable is missing). The QR code deliberately stays
   white-on-black so phones can still scan it.

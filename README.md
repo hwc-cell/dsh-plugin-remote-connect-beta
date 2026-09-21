@@ -57,7 +57,9 @@ least give them a passphrase and keep them in an agent.
 If yours is `danger-full-access`, the visitor has what you have. Use `workspace-write` (or a narrower
 preset) for an exposed Harness; this plugin does not sandbox anything itself.
 
-**What is stored, and for how long.** The access key, its fingerprint history, the audit log and the
+**Where the key comes from, and where it lives.** The access key is generated **and checked by the
+machine running the Harness** — your server only forwards traffic and never sees or stores it. It, its
+fingerprint history, the audit log and the
 cookie-signing secret live in `$DSH_HOME/remote-connect/` with mode 0600. The access key is **not** in
 the macOS Keychain (a known limitation). The browser session the key issues lasts 12 hours; rotating
 or resetting the key invalidates every issued cookie immediately.
