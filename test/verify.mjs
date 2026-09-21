@@ -1612,6 +1612,27 @@ check(
     unusable.body.includes('访问密钥已经失效'),
   'reason=' + String(unusable.headers['x-dsh-reason']),
 )
+// 现在的生成器发的是 32 位 base64url（见 core/tenant.js 的 generateAccessKey）。拿一条
+// 这个形状、但不是当前值的链接，必须同样判成"已失效"而不是"你抄错了" —— 否则用户会
+// 拿着一条真被轮换掉的链接去反复核对拼写（真实踩过的坑）。
+const unusableB64 = await rawRequest(HOST + String(gateInfo.port) + '/?k=Xk9Qm2Rt7Lv4Bz8Nw3Yh6Jp5Cs1Dg0Fa', {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
+check(
+  'gate: 32 位 base64url（新口令形状）的失效链接也判成"已失效"，不是"抄错了"',
+  unusableB64.status === 404 &&
+    unusableB64.headers['x-dsh-reason'] === 'key-unusable' &&
+    unusableB64.body.includes('访问密钥已经失效'),
+  'reason=' + String(unusableB64.headers['x-dsh-reason']),
+)
+const plainlyWrong = await rawRequest(HOST + String(gateInfo.port) + '/?k=oops', {
+  headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+})
+check(
+  'gate: 明显是手输错的短串仍然判成"密钥不正确"（两种失败别混）',
+  plainlyWrong.status === 404 && plainlyWrong.headers['x-dsh-reason'] === 'bad-key',
+  'reason=' + String(plainlyWrong.headers['x-dsh-reason']),
+)
 const health = await rawRequest(HOST + String(gateInfo.port) + '/_dsh/health')
 check(
   'health: /_dsh/health 不需要密钥，只回指纹与计数（绝不回 key）',
