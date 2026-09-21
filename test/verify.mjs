@@ -1985,5 +1985,55 @@ check(
   markerT('dot.ok') === '«dot.ok»' && panelSource.includes("'dot.bad': '网络异常'") && panelSource.includes("'dot.bad': 'Network problem'"),
 )
 
+// ── 口令池：全机唯一命名空间（服务器侧规范 §4.3/§10.8）──
+
+const poolTools = await import(pathToFileURL(path.join(root, 'lib/core/keypool.js')).href)
+const poolDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-pool-'))
+const poolFile = path.join(poolDir, 'keys-used.json')
+let poolReserved = ['active-key-0123456789']
+const pool = poolTools.createKeyPool({
+  file: poolFile,
+  generate: () => 'issued-' + Math.random().toString(36).slice(2, 12),
+  reserved: () => poolReserved,
+})
+pool.remember('active-key-0123456789')
+check(
+  'keypool: 活跃口令也算占用（不能把当前口令当成新口令发出去）',
+  pool.isTaken('active-key-0123456789') === true && pool.isTaken('brand-new-key-999999') === false,
+)
+pool.remember('retired-key-1234567890')
+check('keypool: 退休口令记进池子后同样被拒（换回去也不行）', pool.isTaken('retired-key-1234567890') === true)
+check(
+  'keypool: 只落盘指纹（16 位十六进制），绝不出现明文口令',
+  (() => {
+    const text = fs.readFileSync(poolFile, 'utf8')
+    return text.includes(poolTools.fingerprintKey('retired-key-1234567890')) && text.includes('retired-key') === false
+  })(),
+)
+check(
+  'keypool: issue() 发出来的新口令与活跃/历史都不冲突',
+  (() => {
+    const issued = pool.issue()
+    return pool.isTaken(issued.value) === false && issued.fingerprint.length === poolTools.FINGERPRINT_LENGTH
+  })(),
+)
+poolReserved = ['active-key-0123456789', 'tenant-key-abcdefghij']
+pool.remember('tenant-key-abcdefghij')
+check('keypool: 租户口令也是活跃占位（一把口令只属于一个上游）', pool.isTaken('tenant-key-abcdefghij') === true)
+check(
+  'keypool: 坏数据不会让插件起不来（非法指纹被跳过）',
+  (() => {
+    fs.writeFileSync(poolFile, JSON.stringify({ version: 1, fingerprints: ['goodfingerprint1', 'not-a-fingerprint', 42] }))
+    const fresh = poolTools.createKeyPool({ file: poolFile, log: () => {} })
+    return fresh.fingerprints().length === 0
+  })(),
+)
+check('keypool: 迁移时只收养合法指纹', (() => {
+  const fresh = poolTools.createKeyPool({ file: null })
+  const added = fresh.adopt(['aaaaaaaaaaaaaaaa', 'bad', 'bbbbbbbbbbbbbbbb'])
+  return added === 2
+})())
+fs.rmSync(poolDir, { recursive: true, force: true })
+
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

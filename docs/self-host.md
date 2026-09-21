@@ -245,6 +245,14 @@ whose it is. The check happens only **after** the current password was verified 
 would be an oracle for "is anyone using this password?") and it shares one lock with the write, so two
 concurrent changes cannot both pass.
 
+### 4.9 One key namespace per machine
+
+Every password this plugin hands out — the local access key and each tenant's key — comes from one
+pool, and no two of them are ever equal, including **keys that have already been retired**. The pool
+stores only SHA-256 prefixes (16 hex characters) in `$DSH_HOME/remote-connect/keys-used.json`
+(mode 0600, newest 500 kept), so the file cannot leak a usable key; active keys are also compared in
+constant time, so a change that would collide with a tenant's key is refused as well.
+
 ## 5. The tunnel account
 
 ```bash
