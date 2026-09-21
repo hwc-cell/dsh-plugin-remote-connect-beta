@@ -116,7 +116,7 @@ reason for them to install this on their own machine.
 | Token acquisition (no log scraping) | ✅ official `connection.authenticatedUrl()`, resolved lazily; the log fallback accepts **only a start line whose port matches this process** |
 | Credentials never persisted | ✅ `?k=` never reaches logs (the generated template redacts by default); no secrets in the repository |
 | Config validation | ✅ exports `Config` as a zero-dependency Standard Schema: out-of-range ports, malformed domains, unknown `tunnel` values fail **before activation** |
-| Bilingual panel | ✅ zh/en dictionaries (66 keys each) with `locale` as a soft dependency |
+| Bilingual panel | ✅ zh/en dictionaries (74 keys each) with `locale` as a soft dependency |
 | Bilingual host-side text | ✅ one catalog (`lib/core/messages.js`, 87 keys per language) renders preflight results, tunnel state and panel API errors in the language the panel asks for (`?locale=`); `doctor`/`setup-server`/`keygen` detail output is still Chinese-only and prints an English notice (see CHANGELOG) |
 | Certificate "is it actually served?" | ✅ two paths: the installer compares served vs on-disk live, and prints `--expect-cert-sha256` for `doctor` to verify from outside |
 
@@ -311,7 +311,7 @@ lib/core/preflight.js          DNS / TLS / HTTPS+auth / ssh tunnel checks
 lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
-test/verify.mjs                Contract / render / generator assertions (220 of them)
+test/verify.mjs                Contract / render / generator assertions (228 of them)
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository
 ```
