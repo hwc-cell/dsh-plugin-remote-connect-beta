@@ -96,8 +96,12 @@ server {
     access_log /var/log/nginx/dsh.access.log dsh_nokey;
 
     client_max_body_size 64m;      # images/uploads
-    auth_basic           "DSH";
-    auth_basic_user_file /etc/nginx/.htpasswd-dsh-remote;
+
+    # Optional edge password (off by default): your identity is the per-person ?k= link, and a shared
+    # password cannot be revoked per person while being painful to type on a phone.
+    # Uncomment both lines to enable:
+    # auth_basic           "DSH";
+    # auth_basic_user_file /etc/nginx/.htpasswd-dsh-remote;
 
     location / {
         proxy_pass http://127.0.0.1:8788;
@@ -120,9 +124,10 @@ Caddy equivalent:
 
 ```caddyfile
 dsh.example.com {
-    basic_auth {
-        dsh <bcrypt-hash>
-    }
+    # Optional edge password (off by default) — uncomment to enable:
+    # basic_auth {
+    #     dsh <bcrypt-hash>
+    # }
     reverse_proxy 127.0.0.1:8788 {
         flush_interval -1
     }
@@ -169,9 +174,10 @@ npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
 
 ---
 
-## 4.5 The edge credential (do this instead of inventing a password)
+## 4.5 The edge credential (optional — only if you want a second, independent door)
 
-The edge password is the only door in front of your machine, so do not improvise it:
+The edge password is an **optional** second door; the required one is the plugin's own `?k=` (see §4.8).
+If you do want it, do not improvise the password:
 
 ```bash
 npx dsh-plugin-remote-connect-beta credential            # a typeable passphrase (~46 bit) + the exact commands

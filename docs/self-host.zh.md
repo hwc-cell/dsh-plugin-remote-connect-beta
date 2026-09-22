@@ -94,8 +94,11 @@ server {
     access_log /var/log/nginx/dsh.access.log dsh_nokey;
 
     client_max_body_size 64m;      # 传图/附件
-    auth_basic           "DSH";
-    auth_basic_user_file /etc/nginx/.htpasswd-dsh-remote;
+
+    # 边缘口令（可选，默认不开）：插件的身份是「每人一条唯一 ?k= 链接」，
+    # 共用口令没法按人吊销、手机上还难打。需要时取消下面两行注释：
+    # auth_basic           "DSH";
+    # auth_basic_user_file /etc/nginx/.htpasswd-dsh-remote;
 
     location / {
         proxy_pass http://127.0.0.1:8788;
@@ -117,9 +120,10 @@ Caddy 等价写法：
 
 ```caddyfile
 dsh.example.com {
-    basic_auth {
-        dsh <bcrypt-hash>
-    }
+    # 边缘口令可选，默认不开；需要时取消下面注释：
+    # basic_auth {
+    #     dsh <bcrypt-hash>
+    # }
     reverse_proxy 127.0.0.1:8788 {
         flush_interval -1
     }
@@ -165,9 +169,9 @@ npx dsh-plugin-remote-connect-beta doctor --domain dsh.example.com \
 
 ---
 
-## 4.5 边缘凭证（别自己现编一个口令）
+## 4.5 边缘凭证（可选：想再叠一道独立门时才做）
 
-这道边缘口令是你机器前面唯一的一道门，所以不要随手编：
+边缘门是**可选**的第二道门 —— 必备的那道是插件自己的 `?k=`（见 §4.8）。真要开边缘门，别自己现编一个口令：
 
 ```bash
 npx dsh-plugin-remote-connect-beta credential            # 一句好输入的口令（约 46 bit）+ 现成的设置命令

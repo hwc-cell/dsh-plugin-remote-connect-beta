@@ -264,16 +264,21 @@ dsh-remote serve --public --key "$(openssl rand -hex 16)" --tunnel cloudflared
 
 公网入口后面是一台**能在你机器上执行命令、读写文件**的 agent，所以门必须是真的：
 
-- **边缘口令**（nginx `auth_basic` / Caddy `basic_auth`）：挡住所有"知道地址就想进"的人；
-- **访问密钥 `?k=`**（本插件）：即使边缘配置将来被误改，攻击者拿到的仍是 404；换密钥即让旧链接失效；
-- **Harness 自身会话令牌**：只对通过前两道门的请求注入。
+- **访问密钥 `?k=`**（本插件，**必备**）：你的身份就是这条 192 bit 的随机链接，猜不出来；不带合法密钥一律 404，换密钥即让旧链接立即失效；
+- **Harness 自身会话令牌**：只对通过密钥门的请求注入；
+- **边缘口令**（nginx `auth_basic` / Caddy `basic_auth`，**可选**）：一层与插件无关的独立门，挡住"知道地址就想进"的人。
+  但它是**共用**口令、不能按人吊销，手机上手打一长串体验很差 —— 所以 `snippets` 生成的模板默认把它注释掉。同机还跑着别的服务、想让边缘统一兜底时才建议开。
+
+🔴 **比门更要紧的是信任边界**：TLS 在**你的服务器上**终止，服务器到插件之间是回环上的明文 HTTP。所以服务器上拿到 root 的人
+（含 **VPS 服务商**）既能直连 `127.0.0.1:8788`，也能抓回环流量**看到 `?k=` 与登录 Cookie** —— 「你信得过这台服务器」
+是这套架构的地基，插件这边加多少道门都弥补不了。细节、以及两个能收紧的办法（Unix socket 隧道 / 授权行限制）见 `SECURITY.md`。
 
 四种后端各站在哪一级：
 
 | 后端 | 谁能访问 | 门有几道 |
 | --- | --- | --- |
 | `lan` | 同网段的任何设备 | 只有 Harness 自己的会话 —— **按设计不加访问密钥**，因为局域网入口就是让手机打开地址就能用。在不信任的网络（校园网、酒店、公司访客 Wi-Fi）请改用公网后端 |
-| `selfhost` | 公网 | 边缘口令 + `?k=` + Harness 会话 |
+| `selfhost` | 公网 | `?k=` + Harness 会话（可选叠边缘口令） |
 | `cloudflared` | 那个（临时）公网地址 | `?k=` + Harness 会话；长期用建议再叠 Cloudflare Access |
 | `tailscale` | 你的 tailnet（开 Funnel 则含公网） | `?k=` + Harness 会话；只用 tailnet 时还可再靠 Tailscale ACL |
 
@@ -316,7 +321,7 @@ lib/core/preflight.js    DNS / TLS / HTTPS+口令 / ssh 隧道 检查
 lib/core/snippets.js     nginx / Caddy / authorized_keys 配置生成
 lib/core/serversetup.js  服务器安装脚本生成（含输入校验防注入）
 lib/core/assets/         服务器安装脚本模板（真实 bash，产出必须过 bash -n）
-test/verify.mjs          冒烟测试（两半的真实契约，228 项断言）
+test/verify.mjs          冒烟测试（两半的真实契约，232 项断言）
 ```
 
 ---
@@ -324,7 +329,7 @@ test/verify.mjs          冒烟测试（两半的真实契约，228 项断言）
 ## 验证
 
 ```bash
-npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 228 项）
+npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 232 项）
 bash test/e2e-isolated.sh         # 端到端：拉一个隔离的 DSH 实例把本插件装进去
 bash test/no-private-values.sh    # 门禁：仓库里不得出现作者私有值
 ```

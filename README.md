@@ -259,16 +259,18 @@ Common flags: `--port`, `--upstream`, `--token`, `--domain` (repeatable), `--no-
 
 The public entry point fronts a machine that can execute commands, so the gates are real:
 
-- **Edge password** (nginx `auth_basic` / Caddy `basic_auth` / Cloudflare Access): keeps out anyone who merely knows the address.
-- **Access key `?k=`** (this plugin, on by default): if the edge configuration is ever loosened or bypassed, the attacker still gets a 404. Rotating the key invalidates old links immediately.
-- **Harness session token**: injected only for requests that passed the first two gates.
+- **Access key `?k=`** (this plugin, **required**, on by default): your identity *is* that 192-bit random link — unguessable. Anything without a valid key gets a 404, and rotating the key invalidates old links instantly.
+- **Harness session token** (always on): injected only for requests that passed the key gate.
+- **Edge password** (nginx `auth_basic` / Caddy `basic_auth`, **optional**): a layer independent of the plugin. But it is a *shared* password with no per-person revocation, and typing it on a phone is painful — so the generated template ships it **commented out**. Enable it only if the same server/domain also hosts other things.
+
+🔴 **More important than any gate: the trust boundary.** TLS terminates **on your server**, and the hop from the server to the plugin is plain HTTP over loopback. Anyone with root there (including your **VPS provider**) can reach `127.0.0.1:8788` directly *and* can sniff `?k=` plus the session cookie off loopback. "You trust that server" is the foundation of this architecture — no number of gates on the plugin side substitutes for it. Details, plus two ways to tighten it (Unix-socket tunnel / restricted `authorized_keys` line), are in `SECURITY.md`.
 
 Where each backend sits on that ladder:
 
 | Backend | Who can reach it | Gates in front of it |
 | --- | --- | --- |
 | `lan` | Anything on the same network | Harness session only — **no access key by design**, because the LAN entry exists so a phone can open the address with no ceremony. On an untrusted network (campus, hotel, office guest Wi-Fi), use the public backend instead |
-| `selfhost` | The internet | edge password + `?k=` + Harness session |
+| `selfhost` | The internet | `?k=` + Harness session (edge password optional) |
 | `cloudflared` | The (temporary) internet address | `?k=` + Harness session — add Cloudflare Access if you keep it |
 | `tailscale` | Your tailnet (and, with Funnel, the public internet) | `?k=` + Harness session; Tailscale ACLs if you keep it tailnet-only |
 
@@ -311,7 +313,7 @@ lib/core/preflight.js          DNS / TLS / HTTPS+auth / ssh tunnel checks
 lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
-test/verify.mjs                Contract / render / generator assertions (228 of them)
+test/verify.mjs                Contract / render / generator assertions (232 of them)
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository
 ```

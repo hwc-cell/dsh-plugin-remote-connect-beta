@@ -320,10 +320,10 @@ function commandSnippets(flags) {
   }
   process.stdout.write('=== 3) 反向代理配置（' + kind + '）===\n\n')
   if (kind === 'caddy') {
-    process.stdout.write(caddySite({ domain, targetPort }) + '\n\n')
+    process.stdout.write(caddySite({ domain, targetPort, edgeAuth: flags['edge-auth'] === true }) + '\n\n')
   } else {
     process.stdout.write('# /etc/nginx/conf.d/upgrade-map.conf\n' + NGINX_UPGRADE_MAP + '\n\n')
-    process.stdout.write(nginxServerBlock({ domain, targetPort }) + '\n\n')
+    process.stdout.write(nginxServerBlock({ domain, targetPort, edgeAuth: flags['edge-auth'] === true }) + '\n\n')
   }
   process.stdout.write('=== 4) 本机要跑的隧道命令 ===\n\n')
   process.stdout.write(

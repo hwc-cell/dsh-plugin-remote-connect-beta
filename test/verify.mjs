@@ -764,6 +764,27 @@ check(
   nginx.includes('log_format dsh_nokey') === false && nginx.includes('access_log /var/log/nginx/dsh.access.log dsh_nokey;'),
   'log_format 位于 http 上下文常量里',
 )
+check(
+  'snippets: 边缘口令默认不开（auth_basic 只以注释形式出现）',
+  nginx.includes('# auth_basic') && /^\s*auth_basic/m.test(nginx) === false,
+)
+const nginxWithEdge = snippetTools.nginxServerBlock({ domain: 'dsh.example.com', targetPort: 8788, edgeAuth: true })
+check(
+  'snippets: edgeAuth=true 时才真的发边缘门（并说明它是可选的）',
+  nginxWithEdge.includes('    auth_basic           "DSH";') && nginxWithEdge.includes('可选边缘门'),
+)
+check(
+  'snippets: 生成物里不许出现 markdown 记号（终端/配置文件不渲染）',
+  [nginx, nginxWithEdge, snippetTools.caddySite({ domain: 'dsh.example.com' }), snippetTools.serverSetupSteps({ targetPort: 8788 }), snippetTools.authorizedKeysLine('ssh-ed25519 AAAA test', 8788)]
+    .every((text) => text.includes('**') === false && text.includes('`') === false),
+)
+check(
+  'snippets: 服务器准备步骤里把边缘口令标成可选，并写明信任边界',
+  (() => {
+    const steps = snippetTools.serverSetupSteps({ targetPort: 8788 })
+    return steps.includes('（可选）边缘口令') && steps.includes('信任边界')
+  })(),
+)
 check('snippets: 提供 http 上下文常量（map + log_format）', snippetTools.NGINX_LOG_FORMAT.includes('dsh_nokey') && snippetTools.NGINX_UPGRADE_MAP.includes('$connection_upgrade'))
 check('snippets: ssh 命令带非默认端口', sshCmd.includes('-p 22022'))
 check('snippets: 默认 22 端口时不写 -p', sshCmd22.includes('-p') === false)
