@@ -643,7 +643,7 @@ async function commandDoctor(flags) {
     }
   }
 
-  // 5) 服务器侧需要人跑的检查（Mac 读不到对端日志）
+  // 5) 服务器侧需要人跑的检查（跑 Harness 的那台机器读不到对端日志）
   process.stdout.write('\n以下检查只能在服务器上跑（本机读不到对端的 /etc 与日志）：\n')
   process.stdout.write('  证书生效性：echo | openssl s_client -connect 127.0.0.1:443 -servername ' + domain + ' 2>/dev/null | openssl x509 -noout -enddate \\\n')
   process.stdout.write('              openssl x509 -in /etc/letsencrypt/live/<lineage>/fullchain.pem -noout -enddate   # 两者必须一致\n')

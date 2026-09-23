@@ -17,14 +17,14 @@ server `203.0.113.10`, tunnel account `dshtunnel`, ssh port `22022`, remote port
 ```
 any browser ──https──► your server: nginx/Caddy ──► 127.0.0.1:8788   (loopback only)
                            TLS + edge password        ▲
-                                                      │ ssh -R (your Mac dials out)
+                                                      │ ssh -R (your machine dials out)
                                                       │
-                       your Mac: access key gate ──► Harness on 127.0.0.1:<its own port>
+                   your machine: access key gate ──► Harness on 127.0.0.1:<its own port>
 ```
 
 Three properties make this safe to run on a machine that can execute commands:
 
-1. The tunnel is **outbound**: your Mac never accepts an inbound connection for the public path.
+1. The tunnel is **outbound**: your machine never accepts an inbound connection for the public path.
 2. The reverse-proxy target is **loopback on the server** (`127.0.0.1:8788`), never a public port.
 3. The Harness itself keeps listening on `127.0.0.1` only — this plugin never rebinds it.
 
