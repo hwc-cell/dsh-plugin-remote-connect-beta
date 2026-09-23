@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.4] - 2026-09-23
+
+Documentation-and-defaults release: the published docs now describe the entry the way it is actually
+deployed, and the generated server snippets stop shipping a shared edge password as if it were
+mandatory. **No HTTP route, request parameter or response shape changed in this release.**
+
+### Changed
+
+- **The edge password is now optional and off by default.** `nginxServerBlock` / `caddySite` gained an
+  `edgeAuth` option (default `false`): the generated server block carries the two `auth_basic` lines
+  commented out, together with a note explaining the trade-off. `dsh-remote serve --edge-auth` — or the
+  equivalent config key — turns it back on, and the `htpasswd` step in `serverSetupSteps` is marked
+  optional. Why off: a shared password cannot be revoked per person and is miserable to type on a
+  phone, which fights the one-unique-`?k=`-link-per-person model; the 192-bit access key is a complete
+  identity on its own. Turn it back on if you want an unauthenticated visitor to hit a prompt before
+  anything else.
+- **SECURITY.md and both READMEs were rewritten around the entry that actually runs**: two required
+  doors — the `?k=` access key and the Harness session token, both issued and checked by the machine
+  running the Harness — plus one optional edge door. The earlier "three doors, none of them optional"
+  wording described a configuration no deployment in this project actually used.
+- **New "trust boundary" section** (SECURITY.md, both READMEs): TLS terminates on *your* server, so the
+  server→plugin hop is plaintext loopback. Whoever holds root there — your VPS provider included — can
+  reach `127.0.0.1:8788` directly and read the `?k=` out of loopback traffic. No number of doors inside
+  the plugin compensates for that, and it is precisely why this plugin does not proxy traffic for you
+  and why you bring your own server.
+- Copy neutralisation for a codebase others are meant to run: the `authorized_keys` sample and the key
+  comment written by `dsh-remote keygen` no longer name the author's client platform
+  (`dsh-mac-tunnel` → `dsh-remote-tunnel`), and the SSH reconnection notes now describe a generic
+  server-side new-connection rate limit instead of referring to one particular port.
+
 ## [0.1.0-beta.3] - 2026-09-21
 
 One password per person, one button to rotate it. The access password is now a machine-issued token

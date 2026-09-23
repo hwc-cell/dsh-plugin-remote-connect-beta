@@ -709,7 +709,7 @@ function commandKeygen(flags) {
     fail(outPath + ' 已存在；确认要覆盖请加 --force')
   }
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
-  const result = spawnSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'dsh-mac-tunnel', '-f', outPath], {
+  const result = spawnSync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', 'dsh-remote-tunnel', '-f', outPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   if (result.status !== 0) {
