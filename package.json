@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-remote-connect-beta",
-  "version": "0.1.0-beta.4",
+  "version": "0.1.0-beta.5",
   "description": "让 DSH Harness 可从局域网或公网访问：本机反向代理（含手机适配与访问密钥门）+ ssh 反向隧道 + 服务器配置生成与前置检查。",
   "type": "module",
   "main": "lib/index.js",
