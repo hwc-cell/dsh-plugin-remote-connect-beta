@@ -786,6 +786,17 @@ check(
   })(),
 )
 check('snippets: 提供 http 上下文常量（map + log_format）', snippetTools.NGINX_LOG_FORMAT.includes('dsh_nokey') && snippetTools.NGINX_UPGRADE_MAP.includes('$connection_upgrade'))
+check(
+  'snippets: 光脱敏 access_log 不够，error_log 也要压到 crit（否则 502 时请求行里的 ?k= 落盘）',
+  nginx.includes('error_log /var/log/nginx/dsh.error.log crit;'),
+)
+check(
+  'snippets: 说明 -L 只能在 sshd 侧收掉，并警告别把 Match 放进 sshd_config.d',
+  (() => {
+    const steps = snippetTools.serverSetupSteps({ targetPort: 8788, user: 'dshtunnel' })
+    return steps.includes('Match User dshtunnel') && steps.includes('AllowTcpForwarding remote') && steps.includes('sshd_config.d')
+  })(),
+)
 check('snippets: ssh 命令带非默认端口', sshCmd.includes('-p 22022'))
 check('snippets: 默认 22 端口时不写 -p', sshCmd22.includes('-p') === false)
 check('snippets: 账号建议 nologin', snippetTools.serverSetupSteps({ targetPort: 8788 }).includes('nologin'))
@@ -1253,6 +1264,13 @@ check(
   jarA.status === 303 && cookieA.includes('gate=') && cookieA.includes('.'),
   cookieA.split(';')[0].slice(0, 60),
 )
+const jarSecure = await rawRequest(routedBase + '/?k=key-alice-0123456789', { headers: { 'x-forwarded-proto': 'https' } })
+const secureCookie = String([].concat(jarSecure.headers['set-cookie'] ?? [])[0] ?? '')
+check(
+  'gateway: 门 Cookie 只在 HTTPS 上加 Secure（局域网裸 http 时不加，否则每次都要退回 ?k= 链接）',
+  secureCookie.includes('; HttpOnly') && secureCookie.includes('; Secure') && cookieA.includes('; Secure') === false,
+  'https: ' + secureCookie.split('; ').slice(1).join('; ') + ' | 直连: 无 Secure',
+)
 const pageA = await rawRequest(routedBase + '/', { headers: { cookie: cookieA.split(';')[0] } })
 const bodyA = pageA.body
 check(
@@ -1580,8 +1598,9 @@ check(
 const snippetTools2 = await import(pathToFileURL(path.join(root, 'lib/core/snippets.js')).href)
 const authLine = snippetTools2.authorizedKeysLine('ssh-ed25519 AAAA test', 8788)
 check(
-  'snippets: 授权行用 remote-port-forwarding（只放 -R，不放开 -L）',
-  authLine.includes('restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788"') && !authLine.includes(',port-forwarding,'),
+  'snippets: 授权行只用 sshd 认识的选项（port-forwarding；remote-port-forwarding 会让整行作废）',
+  authLine.startsWith('restrict,port-forwarding,permitlisten="127.0.0.1:8788" ') &&
+    authLine.includes('remote-port-forwarding') === false,
   authLine.slice(0, 60),
 )
 

@@ -40,7 +40,7 @@ Harness 进程，各自的 `DSH_HOME`、端口、启动令牌，网关按访问�
 | --- | --- | --- |
 | 局域网（`lan.port`，默认 8787） | **什么都没有** —— 同一网络的任何设备都能打开 | 那个 Wi-Fi 里每台设备都能在你机器上执行命令。校园网/酒店/公司网络就是"陌生人"：除非你信任当前网络，否则保持 `lan.enabled: false` |
 | 公网入口（你自己的服务器） | 边缘口令（服务器侧）**和** `?k=` 访问密钥（本机） | 那条链接**就是**钥匙：一张截图、一次转发、一个共享的二维码，等于把你手里的访问权交出去。在面板里轮换一次，所有旧链接与旧会话同时失效 |
-| 隧道私钥 `~/.ssh/dsh_remote_tunnel` | 服务器侧 `restrict,remote-port-forwarding,permitlisten=127.0.0.1:<端口>` | 只有那一个转发端口 —— 没有 shell、不能开别的端口、也不能做本地转发 |
+| 隧道私钥 `~/.ssh/dsh_remote_tunnel` | 服务器侧授权限制 `restrict,port-forwarding,permitlisten=127.0.0.1:<端口>` | 只有那一个回环端口能做转发 —— 没有 shell、没有 pty、不能开别的端口。本地转发 `-L` 由服务器侧 `AllowTcpForwarding` 决定；想一并收掉就加 `docs/self-host` 里那段 `Match User` |
 
 **最容易被忽略的风险：这台机器上还有什么。** 如果你开放的这台机器同时存着登录服务器的 SSH 私钥或
 保存的凭据（最常见的是 VPS 的 **root 私钥**），那么"能进 Harness"就等于"能进那些服务器"。
@@ -321,7 +321,7 @@ lib/core/preflight.js    DNS / TLS / HTTPS+口令 / ssh 隧道 检查
 lib/core/snippets.js     nginx / Caddy / authorized_keys 配置生成
 lib/core/serversetup.js  服务器安装脚本生成（含输入校验防注入）
 lib/core/assets/         服务器安装脚本模板（真实 bash，产出必须过 bash -n）
-test/verify.mjs          冒烟测试（两半的真实契约，232 项断言）
+test/verify.mjs          冒烟测试（两半的真实契约，235 项断言）
 ```
 
 ---
@@ -329,7 +329,7 @@ test/verify.mjs          冒烟测试（两半的真实契约，232 项断言）
 ## 验证
 
 ```bash
-npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 232 项）
+npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 235 项）
 bash test/e2e-isolated.sh         # 端到端：拉一个隔离的 DSH 实例把本插件装进去
 bash test/no-private-values.sh    # 门禁：仓库里不得出现作者私有值
 ```

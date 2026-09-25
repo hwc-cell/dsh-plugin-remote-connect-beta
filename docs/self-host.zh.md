@@ -258,13 +258,28 @@ sudo chmod 600 /home/dshtunnel/.ssh/authorized_keys
 那一行长这样（一行写完，`permitlisten` 决定转发只能落在回环）：
 
 ```
-restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
+restrict,port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
 ```
+
+注意选项是 `port-forwarding`，**不是** `remote-port-forwarding` —— 后者在 OpenSSH 里根本不存在，
+而且写一个不存在的选项不会被忽略：**整行作废**（sshd 日志 `bad key options: unknown key option`），
+客户端拿到 `Permission denied (publickey)`，隧道永远拨不上。`-L` 没法在授权行里单独禁止，它由服务器侧
+`AllowTcpForwarding` 决定（安装脚本写的是 `yes`）。想把本地转发也收掉，把下面两行追加到
+`/etc/ssh/sshd_config` 的**末尾**：
+
+```
+Match User dshtunnel
+    AllowTcpForwarding remote
+```
+
+⚠️ 别放进 `sshd_config.d/` 里的文件：Ubuntu 把那个目录 Include 在 sshd_config 顶部，
+Match 块会一直作用到文件末尾，吞掉后面的全局指令。
 
 生成的 `/etc/ssh/sshd_config.d/60-dsh-remote.conf` 里只有两行 —— `AllowTcpForwarding yes` 与
 `ClientAliveInterval 30`，且由安装脚本独占，删掉文件即完整撤销。如果你的安全基线要求更细的粒度，
-也可以改成 `Match User dshtunnel` 块手工放置；要求只有两条：**该账号允许转发**、**保活时间足够长**
-（否则空闲一段时间隧道会被对端断开）。**不要**开 `GatewayPorts yes`。
+也可以改成 `Match User dshtunnel` 块手工放置（见 §4.6），但那个块**不能**写进 `sshd_config.d/`：
+该目录被 Include 在 sshd_config 顶部，Match 会作用到其后的每一行全局指令。要求只有两条：
+**该账号允许转发**、**保活时间足够长**（否则空闲一段时间隧道会被对端断开）。**不要**开 `GatewayPorts yes`。
 
 ---
 

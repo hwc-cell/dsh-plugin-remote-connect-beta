@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Security-and-correctness pass over the server-side pieces this plugin generates. **No HTTP route,
+request parameter or response shape changed in this release.**
+
+### Fixed
+
+- **The generated `authorized_keys` line never worked.** It used
+  `restrict,remote-port-forwarding,permitlisten=…`, and `remote-port-forwarding` is not an OpenSSH
+  option (`man 5 authorized_keys` lists `port-forwarding` / `no-port-forwarding` only). A key option
+  sshd does not recognise is not ignored — it invalidates the **entire line**: sshd logs
+  `bad key options: unknown key option` and the client gets `Permission denied (publickey)`, so the
+  tunnel could never be established. Verified 2026-09-25 against OpenSSH 9.6 with a throwaway account
+  and a temporary sshd (case A → refused, case B → `Accepted publickey` + `Local forwarding listening
+  on 127.0.0.1:8779`). What made this worse than a broken feature: the cheapest way for a user to get
+  past `Permission denied` is to delete the whole option prefix, which leaves a **naked public key** —
+  login plus arbitrary forwarding, the exact opposite of the intent. `lib/core/snippets.js` and the
+  installer template now emit `restrict,port-forwarding,permitlisten="127.0.0.1:<port>"`.
+- **The docs no longer claim local forwards are closed.** `-L` cannot be switched off inside
+  `authorized_keys` — the server's `AllowTcpForwarding` decides. SECURITY.md, both READMEs and both
+  `docs/self-host.*` now say that, and show the `Match User … / AllowTcpForwarding remote` block for
+  closing it, with the warning to append it to the **end** of `/etc/ssh/sshd_config` rather than to a
+  file in `sshd_config.d/` (Ubuntu includes that directory near the top of the file, so a `Match`
+  block there keeps applying to every global directive that follows it).
+
+### Security
+
+- **The generated nginx server block no longer leaks `?k=` through `error_log`.** The snippet
+  redacted `access_log` but left `error_log` at its default level, and nginx prints the **full request
+  line, query string included** for `[error]`-level events — most commonly the 502 every deployment
+  hits while the tunnel is down, plus 413 and client aborts. The block now carries
+  `error_log /var/log/nginx/dsh.error.log crit;`, which is what the reference deployment already did.
+- **The gate cookie carries `Secure` when the request really arrived over HTTPS.** Without it, a
+  browser opening the entry over plain `http://` (old bookmark, a link someone pasted, a typed
+  address) sends the 12-hour session cookie in cleartext — that request happens before the 301 to
+  HTTPS. It is added only when `X-Forwarded-Proto: https` is present, because the LAN entry is plain
+  HTTP on 8787: a hard-coded `Secure` would make LAN visitors fall back to their `?k=` link on every
+  single request.
+
 ## [0.1.0-beta.4] - 2026-09-23
 
 Documentation-and-defaults release: the published docs now describe the entry the way it is actually

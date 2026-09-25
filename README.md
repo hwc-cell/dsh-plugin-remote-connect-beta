@@ -46,7 +46,7 @@ that machine.
 | --- | --- | --- |
 | LAN (`lan.port`, default 8787) | **nothing** — anyone on the same network can open it | command execution for every device on that Wi-Fi. On a campus, hotel or office network that means strangers: keep `lan.enabled: false` unless you trust the network |
 | Public entry (your server) | the edge password (server side) **and** the `?k=` access key (this machine) | the link **is** a key: a screenshot, a forwarded message or a shared QR code hands over the same access you have. Rotate it in the panel and every old link and session dies at once |
-| Tunnel key `~/.ssh/dsh_remote_tunnel` | server-side `restrict,remote-port-forwarding,permitlisten=127.0.0.1:<port>` | one forward on that port — no shell, no other ports, no local forwards |
+| Tunnel key `~/.ssh/dsh_remote_tunnel` | server-side key restrictions: `restrict,port-forwarding,permitlisten=127.0.0.1:<port>` | one forward on that loopback port — no shell, no pty, no other ports. Local forwards (`-L`) depend on the server's `AllowTcpForwarding`; add the `Match User` block from `docs/self-host` to close those too |
 
 **The risk nobody expects: what else is on this machine.** If the machine you expose also holds SSH
 keys or saved credentials for your servers — a root key for a VPS is the common case — then access to
@@ -313,7 +313,7 @@ lib/core/preflight.js          DNS / TLS / HTTPS+auth / ssh tunnel checks
 lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
-test/verify.mjs                Contract / render / generator assertions (232 of them)
+test/verify.mjs                Contract / render / generator assertions (235 of them)
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository
 ```

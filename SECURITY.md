@@ -39,8 +39,13 @@
 
 1. **回环端口对同机其他用户可见** → 可把隧道从 TCP 口改成 Unix socket（`permitlisten` 用路径 + nginx
    `proxy_pass http://unix:/…`），只有该文件的属主/组连得到（挡得住同机其他用户，挡不住 root）；
-2. **授权行必须带限制** → `restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788"`
+2. **授权行必须带限制** → `restrict,port-forwarding,permitlisten="127.0.0.1:8788"`
    （`dsh-remote keygen` 会直接打印这一行）。只贴裸公钥 = 那把钥匙变成「可登录 + 任意转发」，权限面完全不同。
+   ⚠️ 不要写 `remote-port-forwarding`：**OpenSSH 没有这个选项**，写上去会让整行作废
+   （sshd 日志 `bad key options: unknown key option`，客户端 `Permission denied (publickey)`，隧道直接拨不通）。
+   `-L`（本地转发）在授权行里无法单独禁止 —— 它由服务器侧 `AllowTcpForwarding` 决定；要一并收掉就把
+   `Match User <隧道账号>` + `AllowTcpForwarding remote` 追加到 `/etc/ssh/sshd_config` **末尾**
+   （别放进 `sshd_config.d/`：那里被 Include 在文件顶部，Match 会吞掉其后的全局指令）。
 
 ## 紧急处置
 

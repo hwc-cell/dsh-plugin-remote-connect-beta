@@ -230,7 +230,9 @@ ensure_tunnel_user() {
     install -m 600 -o "$TUNNEL_USER" -g "$TUNNEL_USER" /dev/null "$home/.ssh/authorized_keys"
   fi
   say "   下一步：把本机公钥写入 $home/.ssh/authorized_keys，行首带限制："
-  say "     restrict,remote-port-forwarding,permitlisten=\"127.0.0.1:${REMOTE_PORT}\" <你的公钥> dsh-remote-tunnel"
+  say "     restrict,port-forwarding,permitlisten=\"127.0.0.1:${REMOTE_PORT}\" <你的公钥> dsh-remote-tunnel"
+  say "   （不要写 remote-port-forwarding：OpenSSH 没有这个选项，加上它整行作废 →"
+  say "     sshd 报 bad key options，客户端 Permission denied (publickey)，隧道拨不通）"
 }
 
 ensure_sshd_dropin() {
@@ -242,6 +244,12 @@ ensure_sshd_dropin() {
     mkdir -p "$(dirname "$SSHD_DROPIN")"
     cat > "$SSHD_DROPIN" <<SSHD
 # managed by dsh-remote — 删除本文件即可完整撤销
+#
+# 关于转发：授权行里的 restrict,port-forwarding,permitlisten 已经把远端口锁死在
+# 一个回环端口上；本地转发 -L 能不能用，由下面这行决定。想连 -L 也一起收掉时，
+# 不要在本文件里写 Match 块——sshd_config.d 会被 Include 在 sshd_config 顶部，
+# Match 会一直作用到文件末尾、吞掉后面的全局指令；正确做法是把
+# Match User <隧道账号> 与 AllowTcpForwarding remote 追加到 /etc/ssh/sshd_config 末尾。
 AllowTcpForwarding yes
 ClientAliveInterval 30
 SSHD

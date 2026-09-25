@@ -275,8 +275,22 @@ sudo chmod 600 /home/dshtunnel/.ssh/authorized_keys
 The line looks like this (one line, `permitlisten` is what keeps the forward on loopback):
 
 ```
-restrict,remote-port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
+restrict,port-forwarding,permitlisten="127.0.0.1:8788" ssh-ed25519 AAAAC3Nza... dsh-tunnel
 ```
+
+Note the option is `port-forwarding`, **not** `remote-port-forwarding`: the latter does not exist in
+OpenSSH, and an unknown option does not get ignored — it invalidates the whole line (`bad key options:
+unknown key option`), so the key is refused with `Permission denied (publickey)` and the tunnel never
+connects. `-L` cannot be switched off inside `authorized_keys`; it is governed by the server's
+`AllowTcpForwarding` (the installer writes `yes`). To close local forwards as well, append
+
+```
+Match User dshtunnel
+    AllowTcpForwarding remote
+```
+
+to the **end** of `/etc/ssh/sshd_config` — not to a file in `sshd_config.d/`, because Ubuntu includes
+that directory near the top of the file and a `Match` block keeps applying to everything after it.
 
 The generated drop-in `/etc/ssh/sshd_config.d/60-dsh-remote.conf` contains exactly two lines —
 `AllowTcpForwarding yes` and `ClientAliveInterval 30` — and is owned by the installer, so deleting
@@ -286,7 +300,9 @@ There is no CLI flag for that path: if your security baseline wants a `Match Use
 (or a different filename), edit the generated script before running it, or call
 `buildServerSetupScript` from `lib/core/serversetup.js` with your own `sshdDropin` / `deployHook`
 values. The two requirements are only: forwarding allowed for this account, and a keep-alive long
-enough that the tunnel survives idle periods. Do **not** set `GatewayPorts yes`.
+enough that the tunnel survives idle periods. The `Match User` block (see §4.6) is the one thing the
+drop-in cannot express — putting it in `sshd_config.d/` would apply it to every directive that follows
+the include. Do **not** set `GatewayPorts yes`.
 
 ---
 
