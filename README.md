@@ -340,6 +340,10 @@ See `docs/client-preview.png` for the client half rendered in a real browser wit
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — including the pre-publish checklist (repository metadata, npm scope, changelog) that a fork owner must fill in.
 
+## Author
+
+whcl412 — developed and maintained as a personal project.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Security policy: [SECURITY.md](SECURITY.md).

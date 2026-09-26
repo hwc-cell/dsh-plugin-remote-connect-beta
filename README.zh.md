@@ -353,6 +353,10 @@ client 半的 `__ModuleLoader__.load` 协议、槽位注册、store 与 fetch �
 
 ---
 
+## 作者
+
+whcl412 —— 个人开发并维护。
+
 ## License
 
 MIT
