@@ -2,6 +2,52 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.6] - 2026-10-02
+
+**Shared exit: a friend can now just install the plugin.** The old shape assumed everyone brings a
+VPS, a domain, DNS, nginx and a certificate. That is the wrong threshold for "someone wants to try
+it", so there is a fourth backend: `relay`. Someone you trust runs the exit; you paste one invite
+code and you are in — no domain to change, no account to create, no server to configure.
+
+### Added
+
+- **`relay` backend (shared exit).** `public.tunnel: relay` + `public.relay = { url, invite, name }`.
+  On first run the plugin enrolls once (`POST /relay/enroll`) and the exit issues a **name and an
+  access password**; the credential is written to `access-key.json` **before** it is ever displayed.
+  Once enrolled, `--invite` is dropped and the stored credential is reused — the invite code is
+  single-use, so nothing re-registers. The panel card shows the exit address, your name, the full
+  link, a QR code and a plain-language warning about what a shared exit means; the CLI grew
+  `serve --relay <url> --invite <code> --name <name>`.
+- **`relay/server.mjs` — the exit service** (open source, in this repo, zero dependencies): one-time
+  invite codes, server-side issuance of name + password, rotation, revocation, and a duplex
+  NDJSON tunnel (`POST /relay/tunnel`). Uniqueness and format are enforced by the issuer, but the
+  exit **stores only `sha256(key)[:16]` fingerprints** — the state file cannot be turned back into a
+  usable key. It does see the plaintext at the instant it issues one (that is why the code is public).
+- **`lib/core/relayTunnel.js`** — the plugin side of that tunnel: dials out, proxies to the local
+  proxy, streams responses chunk by chunk, reconnects with the same exponential backoff as the ssh
+  tunnel. Never buffers (a harness that streams must stay streamed).
+
+### Changed
+
+- **README positioning.** The old line "the author does not operate a hosted or relay service" is
+  gone. There are now **two routes**: a shared exit you trust (the default, easiest) and a
+  self-hosted server (for anyone who will not hand their machine to an exit). A new section,
+  *Who the exit is, and who can see what*, lists all five entries and says plainly what each party
+  can read, what each can change, and whether the address moves.
+
+### Security
+
+- The exit hardened along the way: per-frame and in-flight request limits, strict `Host`/subdomain
+  parsing, `Connection`-named header stripping, no upstream error text leaked to the public, constant
+  time fingerprint comparison, CRLF checks on the forwarded request line, rate limiting that keys on
+  the real client IP (nginx puts everyone on `127.0.0.1`), and a sweep that **drops a live tunnel as
+  soon as its name is revoked or its password rotated**.
+- The panel's manual "change password" form (current/new/confirm + Change + Reset) and
+  `POST /access-key/verify` are **gone for good** — they were removed in 0.1.0-beta.3 and had been
+  silently lost in a merge; `rotateKey` had been left calling a function that no longer existed.
+  What remains is one button: **New password**.
+
+
 ## [0.1.0-beta.5] - 2026-09-25
 
 Security-and-correctness pass over the server-side pieces this plugin generates. **No HTTP route,

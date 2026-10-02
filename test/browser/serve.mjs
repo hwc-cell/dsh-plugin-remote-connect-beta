@@ -142,6 +142,43 @@ const STATE_TENANTS = {
   error: null,
 }
 
+/** 共享出口（relay）：名字与口令由出口签发，入口在出口域名下面。 */
+const STATE_RELAY = {
+  ok: true,
+  busy: false,
+  canControl: true,
+  config: { problems: [], publicDomain: '', tunnel: 'relay', relayUrl: 'https://exit.example.com' },
+  lan: { running: false, url: null, port: 8787, hasToken: true },
+  public: {
+    running: true,
+    domain: '',
+    port: 8788,
+    entry: 'https://alice.exit.example.com/?k=9f2c41ab77e34d0e',
+    relay: {
+      url: 'https://exit.example.com',
+      subdomain: 'alice',
+      name: 'alice',
+      entry: 'https://alice.exit.example.com/?k=9f2c41ab77e34d0e',
+    },
+    tunnel: {
+      phase: 'up',
+      code: 'tunnel.up',
+      params: {},
+      detail: 'Tunnel connected',
+      publicUrl: 'https://alice.exit.example.com/',
+      restarts: 0,
+    },
+    accessKeyMasked: '9f••••••0e',
+    accessKeyFingerprint: '3f9a1c7d2b45e8a0',
+    accessKeyCreatedAt: '2026-10-02T06:12:00.000Z',
+    accessKeyRotations: 1,
+    accessKeyGenerated: true,
+    hasToken: true,
+  },
+  qr: qrRows('https://alice.exit.example.com/?k=9f2c41ab77e34d0e'),
+  error: null,
+}
+
 /** tailscale 零交付模式：没有自己的域名，地址来自 funnel。 */
 const STATE_TAILSCALE = {
   ok: true,
@@ -284,7 +321,9 @@ const server = http.createServer((req, res) => {
       'text/html; charset=utf-8',
       PAGE(
         JSON.stringify(
-          url.searchParams.get('mode') === 'tailscale'
+          url.searchParams.get('mode') === 'relay'
+            ? STATE_RELAY
+            : url.searchParams.get('mode') === 'tailscale'
             ? STATE_TAILSCALE
             : url.searchParams.get('mode') === 'tenants'
               ? STATE_TENANTS

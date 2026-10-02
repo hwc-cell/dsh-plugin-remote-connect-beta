@@ -4,9 +4,9 @@ English | [中文](README.zh.md)
 
 > ⚠️ **Read this first.** This plugin exposes an agent that **runs commands and reads/writes files on your machine** to the network. If it is compromised, your machine is compromised. Treat it as "publishing a host that can execute arbitrary commands", not as an ordinary web tool.
 >
-> The author **does not operate any hosted or relay service**, and no live instance address appears in these docs — bring your own server and domain. Threat model, credential handling, and vulnerability reporting live in [SECURITY.md](SECURITY.md).
+> There are **two routes to an entry**: a **shared exit** — someone you trust runs the exit, and you only install the plugin (no domain, no account, no server) — or a **self-hosted server** for anyone who will not hand their machine to an exit. The shared exit is the default because "a friend just wants to try it" should not require a VPS; it is also the route that gives the most to someone else, so read [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what) before you use it. No live instance address appears in these docs. Threat model, credential handling, and vulnerability reporting live in [SECURITY.md](SECURITY.md).
 
-Give a **DSH Harness** a remote entry point: over your local network, or over the public internet through your own server. Any phone, tablet, or computer with a modern browser can use it — no client to install, no VPN.
+Give a **DSH Harness** a remote entry point: over your local network, over the public internet through a **shared exit** you trust, or through **your own server**. Any phone, tablet, or computer with a modern browser can use it — no client to install, no VPN.
 
 Two ways to use it, one shared core:
 
@@ -15,16 +15,25 @@ Two ways to use it, one shared core:
 
 ---
 
-## Who runs this, and where
+## How to get an entry: two routes
 
-This plugin is meant to be **installed by whoever wants a remote entry, on their own machine**.
-It is MIT-licensed and dependency-free on purpose: `npx dsh-plugin-remote-connect-beta serve` is the
-whole onboarding, and nothing ever talks to a relay or to an account of ours.
+The plugin is **installed by whoever wants a remote entry, on their own machine**. A Harness runs
+where it is installed, and it can execute commands there, so handing out access means handing out
+access to that computer. There are two ways to get the entry itself:
 
-One consequence is worth stating plainly: **a Harness runs on the machine where it is installed,
-and it can execute commands there.** Handing out access means handing out access to that computer.
-So when a second person wants in, the recommended answer is "install it on your own machine", not
-"use mine".
+- **Shared exit (the default, built for "a friend just wants to try it").** Someone you trust runs
+  the exit server; you only install the plugin — no domain to change, no account to create, no server
+  to configure. On first run the exit issues your access password and a name, and the entry looks like
+  `https://<name>.exit.example.com/`. The trade-off is in [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what):
+  your traffic passes through that exit, and the exit operator can read and change it. Details:
+  [`docs/relay.md`](docs/relay.md).
+- **Self-hosted server (for anyone who will not hand their machine to an exit).** Your own VPS and
+  domain, an `ssh -R` tunnel, nginx/Caddy in front — about six server-side steps, spelled out in
+  [`docs/self-host.md`](docs/self-host.md). Nothing of yours passes through anyone else's exit.
+
+Neither route needs an account of ours, and both are MIT-licensed and dependency-free: `npx
+dsh-plugin-remote-connect-beta serve` (LAN), `... serve --relay https://exit.example.com --invite
+<code>` (shared exit), or the self-hosted steps above are the whole onboarding.
 
 For the case where one machine genuinely serves several people (home server, shared workstation),
 the plugin has a multi-tenant layer: each tenant gets their **own** Harness process with its own
@@ -39,6 +48,26 @@ It is **off by default**, and the trade-offs are spelled out in
 **What you are putting on the network.** A Harness is not a website: it runs commands and reads and
 writes files as the user who started it. Anyone who gets past the gates below gets exactly that, on
 that machine.
+
+### Who the exit is, and who can see what
+
+The "exit" is the machine your browser's TLS connection ends on and which then forwards the request to
+your Harness. Where the exit is decides who sits in the middle of every request and response — and
+that matters more than any individual gate.
+
+| Route | Who is in the middle | Can they see the access password and the request/response content? | What a leaked link means | Does the address change? |
+| --- | --- | --- | --- | --- |
+| LAN entry (`lan.port`, default 8787) | nobody — the browser connects straight to your machine on the same network | no middle party; but there is **no key gate on the LAN** by design, so anyone on that network can open it | the link only works from that network — but on campus/hotel/office Wi-Fi "that network" means strangers | yes — it follows the machine's current network |
+| Self-hosted server (`selfhost`) | **you** — and whoever has root on your server (your VPS provider included) | TLS ends on your server, and the hop server→plugin is plain HTTP over loopback, so anyone with root there can read `?k=` and the session cookie, and can rewrite the response | the `?k=` link **is** the key: forwarding it hands over your access; the only difference from below is that the middle party is you | no (as long as your DNS and certificate stay put) |
+| **Shared exit (`relay`)** | **the exit operator** — whoever runs the exit (the project author, or a party you choose to trust) | **yes, in plain terms:** requests and responses pass through the exit in cleartext — **the exit operator can read them and can rewrite them.** The password is **issued and checked by the exit**, so it sees the plaintext at the instant it issues it; it stores only the first 16 hex chars of `sha256(key)` (a fingerprint, not a usable key) | the link is the password: whoever gets it gets in, and the exit operator can also use or change it directly | no (the exit's DNS and certificate are fixed) |
+| tailscale | Tailscale (its coordination service and any relay it uses), plus your own node as the exit | Tailscale is a third party trusted with metadata; your own node sees the plaintext and checks `?k=` | the `?k=` link is the key; the address is a `*.ts.net` name | only if the node's name changes |
+| cloudflared | Cloudflare, and whoever holds the temporary tunnel | TLS ends at Cloudflare's edge, so Cloudflare sees the decrypted traffic; the tunnel is a third party | the `?k=` link is the key; the address is temporary | **yes** — the free tunnel address is random and changes |
+
+Said plainly: **using a shared exit means handing your machine to the exit operator.** That is the
+shape of the route, not an implementation bug. The exit issues the access password (it keeps only a
+fingerprint, but **it sees the plaintext at the moment it issues it**), and it can read and rewrite
+everything that passes through. There is **no end-to-end encryption here, and these docs will not
+claim any**. If that is not acceptable, take the self-hosted route — it has no such middle party.
 
 **The gates, and what each one is worth**
 
@@ -57,12 +86,14 @@ least give them a passphrase and keep them in an agent.
 If yours is `danger-full-access`, the visitor has what you have. Use `workspace-write` (or a narrower
 preset) for an exposed Harness; this plugin does not sandbox anything itself.
 
-**Where the key comes from, and where it lives.** The access key is generated **and checked by the
-machine running the Harness** — your server only forwards traffic and never sees or stores it. It, its
-fingerprint history, the audit log and the
-cookie-signing secret live in `$DSH_HOME/remote-connect/` with mode 0600. The access key is **not** in
-the macOS Keychain (a known limitation). The browser session the key issues lasts 12 hours; rotating
-or resetting the key invalidates every issued cookie immediately.
+**Where the key comes from, and where it lives.** On the LAN and self-hosted routes the access key is
+generated **and checked by the machine running the Harness** — your server only forwards traffic and
+never sees or stores it. Under a **shared exit** that inverts: the exit issues and checks the password,
+and this machine only stores what the exit gave it (the exit keeps a fingerprint, not the key — but it
+saw the plaintext at issuance; see above). Whatever the route, the key, its fingerprint history, the
+audit log and the cookie-signing secret live in `$DSH_HOME/remote-connect/` with mode 0600. The access
+key is **not** in the macOS Keychain (a known limitation). The browser session the key issues lasts 12
+hours; rotating or resetting the key invalidates every issued cookie immediately.
 
 **Availability is something you can lose.** Rotating the key invalidates all links and sessions — that
 is the point, but tell the people holding links. The LAN address changes with the network. If the
@@ -71,7 +102,9 @@ connections can make reconnects time out silently; this plugin backs off exponen
 
 **Who should not use this.** Anyone who would be handing a shell to a stranger on a machine that holds
 other credentials. "Somebody else wants remote access" is not a reason to give them yours — it is a
-reason for them to install this on their own machine.
+reason for them to install this on their own machine. If they want the easy path, that is exactly what
+the shared exit is for; make sure you have both read [who the exit is](#who-the-exit-is-and-who-can-see-what)
+before you point them at one.
 
 ### Before you expose it: six checks
 
@@ -89,15 +122,19 @@ reason for them to install this on their own machine.
 - Or set `public.enabled: false` / `lan.enabled: false` in `cordis.patch.yml` and restart DSH.
 - Rotate the access key: every existing link and every issued session stops working at once.
 
-## Four backends (pick one; same core)
+## Exit options (pick one; same core)
+
+The two headline routes are the **shared exit** (`relay`) and the **self-hosted server** (`selfhost`).
+The other rows are the zero-setup alternatives, all sharing the same core.
 
 | Backend | Work required on the server | Who it suits | Reachability in mainland China |
 | --- | --- | --- | --- |
+| `relay` (shared exit) | **0 items** — you only install the plugin and paste one invite code; the exit does the rest | "A friend just wants to try it": the default, easy route. Read [who the exit is](#who-the-exit-is-and-who-can-see-what) first — the exit operator can read and rewrite your traffic | Depends on where the exit is hosted |
 | `lan` | **0 items** | Phone/computer on the same Wi-Fi | No external dependency ✅ |
 | `tenants` | **0 items** | Several people, each with their own Harness — see [`docs/multi-tenant.md`](docs/multi-tenant.md) | Depends on the entry above |
 | `cloudflare` | **0 items** (install `cloudflared`, authorize; brings its own certificate, Cloudflare Access available) | Most people | ⚠️ unstable |
 | `tailscale` | **0 items** (`tailscale funnel`; brings its own certificate and domain) | People who prefer not to use Cloudflare | ⚠️ unstable |
-| `selfhost` | **6 items**: DNS / certificate / nginx reverse proxy / edge password / dedicated ssh account / self-test — step-by-step guide: [`docs/self-host.md`](docs/self-host.md) | People with a VPS and their own domain who want full control | ✅ recommended for mainland users |
+| `selfhost` | **6 items**: DNS / certificate / nginx reverse proxy / edge password / dedicated ssh account / self-test — step-by-step guide: [`docs/self-host.md`](docs/self-host.md) | People with a VPS and their own domain who want full control, and anyone who will not trust an exit | ✅ recommended for mainland users |
 
 > Hosted tunnels are **unreliable from mainland China**, so `selfhost` is a first-class backend rather than a patch: for those users, "own VPS + own domain" is usually a hard requirement.
 
@@ -105,6 +142,7 @@ reason for them to install this on their own machine.
 
 | Capability | Status |
 | --- | --- |
+| Shared-exit (`relay`) backend | ✅ implemented: enroll once with a one-time invite → the exit issues a name + password → the plugin stores it (0600, atomically, **before showing it**) → dials the tunnel; the panel shows the exit address, your name, the full link and the plaintext-traffic warning. ⚠️ the trust premise is the exit you pick; the exit service lives in `relay/server.mjs` (auditable) |
 | `lan` backend (panel + CLI + mobile layout + QR) | ✅ implemented; verified end to end |
 | `selfhost` backend (ssh -R tunnel, config generation, preflight) | ✅ implemented; the six server-side items are delivered by a generated installer script |
 | `cloudflare` backend | ✅ implemented as a tunnel mode (`--tunnel cloudflared`); ⚠️ not exercised in this environment |
@@ -116,8 +154,8 @@ reason for them to install this on their own machine.
 | Token acquisition (no log scraping) | ✅ official `connection.authenticatedUrl()`, resolved lazily; the log fallback accepts **only a start line whose port matches this process** |
 | Credentials never persisted | ✅ `?k=` never reaches logs (the generated template redacts by default); no secrets in the repository |
 | Config validation | ✅ exports `Config` as a zero-dependency Standard Schema: out-of-range ports, malformed domains, unknown `tunnel` values fail **before activation** |
-| Bilingual panel | ✅ zh/en dictionaries (74 keys each) with `locale` as a soft dependency |
-| Bilingual host-side text | ✅ one catalog (`lib/core/messages.js`, 87 keys per language) renders preflight results, tunnel state and panel API errors in the language the panel asks for (`?locale=`); `doctor`/`setup-server`/`keygen` detail output is still Chinese-only and prints an English notice (see CHANGELOG) |
+| Bilingual panel | ✅ zh/en dictionaries (72 keys each) with `locale` as a soft dependency |
+| Bilingual host-side text | ✅ one catalog (`lib/core/messages.js`, 151 keys per language) renders preflight results, tunnel state and panel API errors in the language the panel asks for (`?locale=`); `doctor`/`setup-server`/`keygen` detail output is still Chinese-only and prints an English notice (see CHANGELOG) |
 | Certificate "is it actually served?" | ✅ two paths: the installer compares served vs on-disk live, and prints `--expect-cert-sha256` for `doctor` to verify from outside |
 
 ---
@@ -159,7 +197,10 @@ npm install dsh-plugin-remote-connect-beta
           enabled: false
           domain: dsh.example.com
           port: 8788
-          tunnel: ssh            # ssh | cloudflared | tailscale | none
+          tunnel: ssh            # ssh | cloudflared | tailscale | relay | none
+          relay:                 # only for tunnel: relay (shared exit)
+            url: https://exit.example.com   # exit base address (no trailing slash needed)
+            invite: ''           # one-time invite code; used only on first enrollment
           tailscale:             # only for tunnel: tailscale
             path: tailscale      # client binary
             httpsPort: 443       # funnel's public HTTPS port (served by tailscaled)
@@ -220,6 +261,18 @@ dsh-remote uninstall-server --domain dsh.example.com --out /tmp/dsh-uninstall.sh
 ssh <server> "sudo bash /tmp/dsh-uninstall.sh"
 ```
 
+Shared exit (install and go — the exit is hosted by someone you trust):
+
+```bash
+dsh-remote serve --relay https://exit.example.com --invite <code>
+#   → https://<name>.exit.example.com/?k=<key>   (the exit issues name + key on first run)
+#   once enrolled, drop --invite: the stored credential is reused and never re-registered
+```
+
+It still keeps the access-key gate; the difference from self-hosting is only *where* the key is issued
+and who is in the middle. Read [who the exit is](#who-the-exit-is-and-who-can-see-what) before you point
+anyone at one — the exit operator can read and rewrite your traffic. Details: [`docs/relay.md`](docs/relay.md).
+
 **No server at all?** Two zero-setup backends:
 
 ```bash
@@ -243,7 +296,7 @@ Both keep the access key gate: the public address is useless without `?k=<key>`,
 
 | Command | Purpose |
 | --- | --- |
-| `serve` | Start the proxy; `--public` binds loopback only and enforces the key gate; `--tunnel ssh\|cloudflared\|tailscale` also starts a tunnel |
+| `serve` | Start the proxy; `--public` binds loopback only and enforces the key gate; `--tunnel ssh\|cloudflared\|tailscale` also starts a tunnel; `--relay <url> --invite <code>` uses the shared exit (enroll once, store the issued key, then dial) |
 | `check` | DNS / certificate / edge password / ssh tunnel (or tailscale funnel), each with a verdict and a fix; text follows `--lang` / `DSH_REMOTE_LANG` / `LANG` |
 | `doctor` | Full physical: upstream provenance, proxy self-test, the four public checks, **the certificate actually served**, `--expect-cert-sha256` comparison, plus the checks only the server can run |
 | `snippets` | Print nginx / Caddy fragments and the `authorized_keys` line (for people who prefer to hand-write config) |
@@ -251,7 +304,7 @@ Both keep the access key gate: the public address is useless without `?k=<key>`,
 | `setup-server` | Generate the server installer (prints by default; `probe` / `install` / `--dry-run` inside) |
 | `uninstall-server` | Generate a standalone uninstall script (`--purge-user` also removes the account) |
 
-Common flags: `--port`, `--upstream`, `--token`, `--domain` (repeatable), `--no-mobile`, `--json`; tunnel flags: `--ssh-user`, `--ssh-host`, `--ssh-key`, **`--ssh-port`**, `--remote-port`.
+Common flags: `--port`, `--upstream`, `--token`, `--domain` (repeatable), `--no-mobile`, `--json`; tunnel flags: `--ssh-user`, `--ssh-host`, `--ssh-key`, **`--ssh-port`**, `--remote-port`; shared-exit flags: `--relay <url>`, `--invite <code>`, `--name <subdomain>`.
 
 ---
 
@@ -263,13 +316,14 @@ The public entry point fronts a machine that can execute commands, so the gates 
 - **Harness session token** (always on): injected only for requests that passed the key gate.
 - **Edge password** (nginx `auth_basic` / Caddy `basic_auth`, **optional**): a layer independent of the plugin. But it is a *shared* password with no per-person revocation, and typing it on a phone is painful — so the generated template ships it **commented out**. Enable it only if the same server/domain also hosts other things.
 
-🔴 **More important than any gate: the trust boundary.** TLS terminates **on your server**, and the hop from the server to the plugin is plain HTTP over loopback. Anyone with root there (including your **VPS provider**) can reach `127.0.0.1:8788` directly *and* can sniff `?k=` plus the session cookie off loopback. "You trust that server" is the foundation of this architecture — no number of gates on the plugin side substitutes for it. Details, plus two ways to tighten it (Unix-socket tunnel / restricted `authorized_keys` line), are in `SECURITY.md`.
+🔴 **More important than any gate: the trust boundary.** On the self-hosted route TLS terminates **on your server**, and the hop from the server to the plugin is plain HTTP over loopback. Anyone with root there (including your **VPS provider**) can reach `127.0.0.1:8788` directly *and* can sniff `?k=` plus the session cookie off loopback. On the **shared exit** the same is true, except the middle party is the exit operator — who also issued the password, so they saw its plaintext once and can read and rewrite the traffic. "You trust the middle party" is the foundation of both routes — no number of gates on the plugin side substitutes for it. Details, plus two ways to tighten the self-hosted route (Unix-socket tunnel / restricted `authorized_keys` line), are in `SECURITY.md`.
 
 Where each backend sits on that ladder:
 
 | Backend | Who can reach it | Gates in front of it |
 | --- | --- | --- |
 | `lan` | Anything on the same network | Harness session only — **no access key by design**, because the LAN entry exists so a phone can open the address with no ceremony. On an untrusted network (campus, hotel, office guest Wi-Fi), use the public backend instead |
+| `relay` (shared exit) | The internet, at the address the exit issued you | The exit issues and checks `?k=`; the tunnel is authenticated with it. The exit operator sits in the middle and can read and rewrite everything (see the risk table above) |
 | `selfhost` | The internet | `?k=` + Harness session (edge password optional) |
 | `cloudflared` | The (temporary) internet address | `?k=` + Harness session — add Cloudflare Access if you keep it |
 | `tailscale` | Your tailnet (and, with Funnel, the public internet) | `?k=` + Harness session; Tailscale ACLs if you keep it tailnet-only |
@@ -307,13 +361,16 @@ lib/client.js                  DSH plugin client half: hand-written bundle (no b
 lib/core/proxy.js              Reverse proxy core: Host rewrite, token injection, mobile adaptation, key gate
 lib/core/keypool.js            Password pool: one machine-wide namespace (no two equal, retired values never re-issued)
 lib/core/tunnel.js             ssh -R / cloudflared supervision with exponential backoff; tailscale funnel start/stop
+lib/core/relayTunnel.js        Shared-exit tunnel: the plugin dials out, frames requests and streams responses
 lib/core/tailscale.js          tailscale funnel argv, status parsing and error classification (pure + testable)
 lib/core/messages.js           zh/en catalog for host-generated text (preflight, tunnel state, API errors, CLI)
 lib/core/preflight.js          DNS / TLS / HTTPS+auth / ssh tunnel checks
 lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
-test/verify.mjs                Contract / render / generator assertions (235 of them)
+relay/server.mjs               Shared-exit identity service: invites, issuance, rotation; fingerprints only
+test/verify.mjs                Contract / render / generator assertions (241 of them)
+test/relay.mjs                 Shared-exit service + tunnel transport assertions
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository
 ```
@@ -324,11 +381,12 @@ test/no-private-values.sh      Gate: no author-private values in the repository
 
 ```bash
 npm test              # contract, render, generator and localization assertions
+npm run test:relay    # shared-exit service + tunnel transport assertions
 npm run gate          # no author-private values in the repository
 npm run e2e           # isolated DSH instance, plugin mounted, entry reachable
 ```
 
-`npm test` covers the host half (export shape, config validation, routes, switches, privilege fence, upstream provenance, port release after fiber disposal), the client half (`__ModuleLoader__.load` protocol, slot registration, zh/en dictionaries, store/fetch interaction, real React SSR including the QR SVG), and the generators (the rendered installer and uninstaller must pass `bash -n`; shell injection in inputs must be rejected).
+`npm test` covers the host half (export shape, config validation, routes, switches, privilege fence, upstream provenance, port release after fiber disposal, and the shared-exit credential flow — enroll-once, store-before-show, rotate, panel rendering), the client half (`__ModuleLoader__.load` protocol, slot registration, zh/en dictionaries, store/fetch interaction, real React SSR including the QR SVG and the relay panel), and the generators (the rendered installer and uninstaller must pass `bash -n`; shell injection in inputs must be rejected).
 
 `test/e2e-isolated.sh` boots a **real Harness** with its own `DSH_HOME` and port, mounts this repository as a plugin, and asserts: no `plugin failures`, host API reachable, LAN entry opened by the plugin, client half present in the boot graph, and the LAN entry completing the token exchange.
 

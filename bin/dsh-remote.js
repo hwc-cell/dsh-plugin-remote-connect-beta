@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createProxy, qrRows, defaultLogCandidates, lanAddresses } from '../lib/core/proxy.js'
 import { createTunnel } from '../lib/core/tunnel.js'
+import { createRelayTunnel } from '../lib/core/relayTunnel.js'
 import { runPreflight } from '../lib/core/preflight.js'
 import { normalizeLocale, resolveLocale, translator } from '../lib/core/messages.js'
 import { buildServerSetupScript, buildServerUninstallScript } from '../lib/core/serversetup.js'
@@ -22,7 +23,7 @@ import { createTenancy } from '../lib/core/tenancy.js'
 import { defaultGateSecretPath, defaultRegistryPath, loadOrCreateGateSecret, pluginStateDir } from '../lib/core/paths.js'
 import { createRegistry, defaultTenantBaseDir, generateAccessKey, slugifyId } from '../lib/core/tenant.js'
 import { generatePassphrase, generateRandomPassword, setupCommands } from '../lib/core/credential.js'
-import { checkAccessKeyStrength } from '../lib/index.js'
+import { checkAccessKeyStrength, ensureRelayCredential, relayBaseEntry } from '../lib/index.js'
 import { discoverHarnessBin, discoverRuntime } from '../lib/core/instance.js'
 import {
   NGINX_UPGRADE_MAP,
@@ -132,14 +133,17 @@ function tenantEntryFor(tenant, info, flags) {
 }
 
 async function commandServe(flags) {
-  const isPublic = flags.public === true
+  const relayUrl = typeof flags.relay === 'string' ? flags.relay.trim().replace(/\/+$/, '') : ''
+  const relayMode = relayUrl !== ''
   const multi = flags.multi === true
-  const accessKey = typeof flags.key === 'string' ? flags.key : ''
-  // 多租户下没有"全局密钥"：每个人都有自己那把，所以不要求 --key
-  if (isPublic && !multi && accessKey === '' && flags['allow-no-key'] !== true) {
+  const isPublic = flags.public === true || relayMode
+  let accessKey = typeof flags.key === 'string' ? flags.key : ''
+  // 多租户下没有"全局密钥"：每个人都有自己那把，所以不要求 --key。
+  // relay 模式的口令由出口签发（下面 enroll 后才有），不要求 --key。
+  if (isPublic && !multi && !relayMode && accessKey === '' && flags['allow-no-key'] !== true) {
     fail(t('cli.error.needKey'))
   }
-  if (isPublic && accessKey === '' && flags['allow-no-key'] === true) {
+  if (isPublic && !relayMode && accessKey === '' && flags['allow-no-key'] === true) {
     process.stderr.write(t('cli.serve.noKeyWarning') + '\n')
   }
   const port = Number(flags.port ?? (isPublic ? 8788 : 8787))
@@ -194,8 +198,39 @@ async function commandServe(flags) {
     process.stderr.write('· ' + t('cli.multi.started', { count: String(started.length) }) + '\n')
   }
 
+  // relay：先拿出口签发的凭据（没有就登记一次），再拨隧道。登记失败直接报错退出。
+  let relayCredential = null
+  if (relayMode) {
+    try {
+      relayCredential = await ensureRelayCredential({
+        url: relayUrl,
+        invite: typeof flags.invite === 'string' ? flags.invite : '',
+        name: typeof flags.name === 'string' ? flags.name : '',
+        file: path.join(pluginStateDir(), 'access-key.json'),
+      })
+    } catch (error) {
+      fail(String(error?.message ?? error))
+    }
+    accessKey = relayCredential.accessKey
+    process.stderr.write('· 出口登记完成：' + relayCredential.subdomain + '\n')
+  }
+
   let tunnel = null
-  if (typeof flags.tunnel === 'string') {
+  if (relayMode) {
+    const relayPublic = relayCredential.baseEntry || relayBaseEntry(relayUrl, relayCredential.subdomain)
+    tunnel = createRelayTunnel({
+      url: relayUrl,
+      subdomain: relayCredential.subdomain,
+      accessKey,
+      localPort: info.port,
+      publicUrl: relayPublic === '' ? undefined : relayPublic,
+      log: (line) => process.stdout.write('· ' + line + '\n'),
+      onState: (state) => {
+        process.stderr.write('· ' + t(state.code, state.params) + '\n')
+      },
+    })
+    tunnel.start()
+  } else if (typeof flags.tunnel === 'string') {
     if (!['ssh', 'cloudflared', 'tailscale', 'none'].includes(flags.tunnel)) {
       fail(t('cli.error.unknownTunnel', { mode: flags.tunnel }))
     }
@@ -221,11 +256,13 @@ async function commandServe(flags) {
   }
 
   const publicBase =
-    tunnel !== null && tunnel.state().publicUrl !== null
-      ? tunnel.state().publicUrl
-      : isPublic && domains.length > 0
-        ? 'https://' + domains[0] + '/'
-        : null
+    relayMode && relayCredential !== null
+      ? relayCredential.baseEntry || relayBaseEntry(relayUrl, relayCredential.subdomain) || null
+      : tunnel !== null && tunnel.state().publicUrl !== null
+        ? tunnel.state().publicUrl
+        : isPublic && domains.length > 0
+          ? 'https://' + domains[0] + '/'
+          : null
   const payload = {
     ...info,
     tenants: tenancy === null ? null : tenancy.list(),
@@ -245,6 +282,9 @@ async function commandServe(flags) {
     if (!info.loopbackOnly && info.lanUrl !== null) {
       process.stdout.write(t('cli.serve.lan', { url: info.lanUrl }) + '\n')
       printQr(info.lanUrl)
+    }
+    if (relayMode && relayCredential !== null) {
+      process.stdout.write(t('cli.serve.relayExit', { url: relayUrl, name: relayCredential.subdomain }) + '\n')
     }
     if (publicBase !== null) {
       const entryUrl = publicBase + (accessKey === '' ? '' : '?k=' + accessKey)
