@@ -16,6 +16,8 @@ Two ways to use it, one shared core:
 ---
 
 ## How to get an entry: two routes
+> Already have an **exit address and an invite code** and want the shortest path? Follow [`docs/using-a-shared-exit.md`](docs/using-a-shared-exit.md) (the address and code come from whoever invited you).
+
 
 The plugin is **installed by whoever wants a remote entry, on their own machine**. A Harness runs
 where it is installed, and it can execute commands there, so handing out access means handing out

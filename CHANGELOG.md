@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.7] - 2026-10-02
+
+### Added
+
+- **`docs/using-a-shared-exit.md` / `.zh.md`** — the user-facing how-to for the shared exit: the two
+  things you need (an exit address and a one-time invite code), both of which come from **whoever
+  invited you**, never from this repository; where to put them (plugin config or one CLI command);
+  what the first run does (the password is written to disk before it is displayed, the invite is then
+  spent); how to rotate and how to leave (revoke cuts a live tunnel, not just new connections).
+  Both READMEs now carry a single line pointing at it.
+
+
 ## [0.1.0-beta.6] - 2026-10-02
 
 **Shared exit: a friend can now just install the plugin.** The old shape assumed everyone brings a
