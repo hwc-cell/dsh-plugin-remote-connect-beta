@@ -2198,7 +2198,7 @@ globalThis.fetch = async (url, options = {}) => {
   }
 }
 
-// 1) 配置校验：relay 的 url 必填、尾斜杠归一化、非 http(s) 报问题
+// 1) 配置校验：relay 的 url 可省（省了就用官方出口）、尾斜杠归一化、非 http(s) 报问题
 const relayConfigured = host.normalizeConfig({
   public: { enabled: true, tunnel: 'relay', relay: { url: 'https://exit.example.com/' } },
 })
@@ -2207,11 +2207,34 @@ check(
   relayConfigured.problems.length === 0 && relayConfigured.public.relay.url === 'https://exit.example.com',
   'problems=' + relayConfigured.problems.join(' | ') + ' url=' + relayConfigured.public.relay.url,
 )
+check(
+  'relay: 自定义出口不标 official',
+  relayConfigured.public.relay.official === false,
+  'official=' + String(relayConfigured.public.relay.official),
+)
+// 默认出口：url 可省 —— 空 / official / default 三种写法都落到官方出口，且面板能知道它是官方
 const relayUrlMissing = host.normalizeConfig({ public: { enabled: true, tunnel: 'relay' } })
 check(
-  'relay: tunnel=relay 缺 public.relay.url → 明确报问题',
-  relayUrlMissing.problems.some((problem) => problem.includes('public.relay.url')),
-  relayUrlMissing.problems.join(' | ') || '（无）',
+  'relay: tunnel=relay 缺 public.relay.url → 落到官方出口（不报问题）',
+  relayUrlMissing.problems.length === 0 &&
+    relayUrlMissing.public.relay.url === host.OFFICIAL_EXIT_URL &&
+    relayUrlMissing.public.relay.official === true,
+  'problems=' + relayUrlMissing.problems.join(' | ') + ' url=' + relayUrlMissing.public.relay.url,
+)
+for (const alias of ['official', 'default', 'OFFICIAL']) {
+  const byAlias = host.normalizeConfig({ public: { enabled: true, tunnel: 'relay', relay: { url: alias } } })
+  check(
+    'relay: url=' + JSON.stringify(alias) + ' → 官方出口',
+    byAlias.problems.length === 0 && byAlias.public.relay.url === host.OFFICIAL_EXIT_URL,
+    'problems=' + byAlias.problems.join(' | ') + ' url=' + byAlias.public.relay.url,
+  )
+}
+// 非 relay 模式下不许把空 url 解析成官方出口 —— 那会让面板在自建模式下显示一个它没用到的出口
+const sshUnrelated = host.normalizeConfig({ public: { enabled: true, tunnel: 'ssh', domain: 'dsh.example.com', relay: {} } })
+check(
+  'relay: 非 relay 模式 → 不解析官方出口（official=false、url 保持空）',
+  sshUnrelated.public.relay.url === '' && sshUnrelated.public.relay.official === false,
+  'url=' + JSON.stringify(sshUnrelated.public.relay.url) + ' official=' + String(sshUnrelated.public.relay.official),
 )
 const relayBadScheme = host.Config['~standard'].validate({
   public: { enabled: true, tunnel: 'relay', relay: { url: 'ftp://exit.example.com' } },
@@ -2361,6 +2384,42 @@ check(
 check(
   'relay: 反向断言 —— 口令说明走 relayHint（出口是权威），不是本机 key.hint',
   relayPanel.includes('«key.relayHint»') && relayPanel.includes('«key.hint»') === false,
+)
+
+// 9) 官方出口（默认出口）必须在面板上被显式标出：不静默替用户选一个出口
+clientExports.internals.setState({
+  revealedKey: null,
+  checkResults: null,
+  data: {
+    ok: true,
+    busy: false,
+    canControl: true,
+    config: { problems: [], publicDomain: '', tunnel: 'relay' },
+    lan: { running: false, url: null, port: 8787 },
+    public: {
+      running: true,
+      domain: '',
+      port: 8788,
+      entry: 'https://alice.exit.example.com/?k=relay-key-0123456789',
+      accessKeyMasked: 're••••••89',
+      relay: {
+        url: 'https://relay.exit.example.com',
+        official: true,
+        subdomain: 'alice',
+        name: 'Alice',
+        entry: 'https://alice.exit.example.com/?k=relay-key-0123456789',
+      },
+      tunnel: null,
+    },
+    qr: null,
+    error: null,
+  },
+})
+const officialRelayPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+check(
+  'relay: 官方出口在面板上被显式标出（不静默替用户选出口）',
+  officialRelayPanel.includes('«relay.exitOfficial»') && officialRelayPanel.includes('«relay.exit»') === false,
+  officialRelayPanel.includes('«relay.exitOfficial»') ? 'ok' : '没有标出官方出口',
 )
 
 globalThis.fetch = relayFetchBackup

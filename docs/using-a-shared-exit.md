@@ -2,14 +2,17 @@
 
 This route is one sentence long: **someone else runs the exit, you only install the plugin.**
 
-## Two things you need from whoever runs the exit
+## Two things you need
 
-1. **The exit address** — an `https://` base URL;
-2. **An invite code** — single use.
+1. **An exit address** — an `https://` base URL. **Leave it out and you use the official exit**:
+   `https://relay.dsh.lycheeledger.cn`, run by the project author. If someone else (a friend, or you
+   yourself) gave you an exit, pass that address instead — the two routes differ only in that one field.
+2. **An invite code** — single use. This one only ever comes from whoever invites you.
 
-Both **arrive in the message that person sends you**, not in this repository: every exit provider
-(the person running the template, a friend, or you yourself) is different, so there is no fixed
-address this repo could publish. If someone invited you, it is in that invitation.
+The official exit is the **default**, and it is written down in this repository
+(`lib/core/officialExit.js`) because it is a **public product endpoint** (the same nature as
+ngrok.com), not a private value. With a non-official exit, the address only ever arrives in that
+person's message.
 
 ## How to use it
 
@@ -20,7 +23,7 @@ public:
   enabled: true
   tunnel: relay
   relay:
-    url: <the exit address you were given>
+    url: https://relay.dsh.lycheeledger.cn   # empty = the official exit; or the address you were given
     invite: <the one-time invite code>
     name: <the subdomain you want; may be left empty>
 ```
@@ -32,6 +35,7 @@ config; the plugin reuses the stored credential and never re-registers.
 ### B. One command (works without DSH installed)
 
 ```bash
+npx dsh-plugin-remote-connect-beta serve --relay --invite <code> --name <name>   # the official exit
 npx dsh-plugin-remote-connect-beta serve --relay <exit url> --invite <code> --name <name>
 ```
 

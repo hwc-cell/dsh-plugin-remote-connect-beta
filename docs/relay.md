@@ -2,8 +2,9 @@
 
 > Written for whoever edits this code (humans and AI alike). It explains **why**, not just what.
 >
-> Status: **M1 (identity service) and M2 (tunnel transport) done; plugin exit and deployment still to come.** Every section below is
-> tagged with the stage it lands in.
+> Status: **M1–M5 all landed** — identity service, duplex tunnel, the plugin's fourth exit engine, exit
+> deployment, docs. **The default is the official exit (see §7)**; the bring-your-own-server path stays
+> for anyone who will not hand their machine to an exit.
 
 ## 1. The problem
 
@@ -13,9 +14,10 @@ steps from `docs/self-host`. For "my friend just wants to try it", that threshol
 So there is a **shared exit**: one party hosts the exit, everybody else only installs the plugin — no
 domain to change, no account to create, no server to configure.
 
-That **contradicts** the old README line "the author does not host or relay anything". That line has to
-go: the default is the **shared exit**, and the bring-your-own-server path stays for anyone who would
-rather not trust the exit.
+That **contradicts** the old README line "the author does not host or relay anything", which is now
+gone. The current line: the default is the **shared exit, and the default exit is run by the project
+author** (address in §7); the bring-your-own-server path stays for anyone who would rather not trust
+an exit.
 
 ## 2. Topology
 
@@ -83,9 +85,10 @@ use, with an expiry, revocable.
 | --- | --- | --- |
 | **M1** | identity service: invites, issuance (name + key), rotation, registry (fingerprints only) | ✅ `relay/server.mjs` |
 | **M2** | tunnel transport: plugin dials out → exit feeds requests in (streaming both ways) | ✅ `lib/core/relayTunnel.js` + `relay/server.mjs` |
-| **M3** | plugin's fourth exit engine `relay`: enroll once → store key → dial → panel shows link and QR | todo |
-| **M4** | exit deployment: frp/nginx wildcard block, `*.dsh.example.com` wildcard DNS, certificate | todo |
-| **M5** | docs: README positioning, risk table, contrast with `docs/self-host` | todo |
+| **M3** | plugin's fourth exit engine `relay`: enroll once → store key → dial → panel shows link and QR | ✅ |
+| **M4** | exit deployment: nginx wildcard block, `*.dsh.example.com` wildcard DNS, wildcard certificate | ✅ |
+| **M5** | docs: README positioning, risk table, contrast with `docs/self-host` | ✅ |
+| **M6** | the official exit becomes the **default** (one flag to change it); gate exempts the official host exactly | ✅ see §7 |
 
 ## 6. Deployment (the commands M4 will need, for the record)
 
@@ -102,8 +105,41 @@ node relay/server.mjs --state /var/lib/dsh-relay/state.json --list         # reg
 What a user gets is one command:
 
 ```bash
-npx dsh-plugin-remote-connect-beta serve --relay wss://exit.example.com/relay --invite <code>
-# → https://<name>.exit.example.com/?k=<key>
+npx dsh-plugin-remote-connect-beta serve --relay --invite <code>          # the official exit (default)
+npx dsh-plugin-remote-connect-beta serve --relay https://my-exit.example.com --invite <code>
+# → https://<name>.<exit-domain>/?k=<key>
 ```
 
 No domain to change, no account to create, no client to install.
+
+## 7. The official exit (the default) — the one place a real address lives
+
+**The default exit is the official exit**: leave `public.relay.url` empty and you get it. The address
+lives in exactly one file, `lib/core/officialExit.js`:
+
+```js
+export const OFFICIAL_EXIT_URL = 'https://relay.dsh.lycheeledger.cn'
+```
+
+Why it may sit in a public repo: it is a **public product endpoint** (same nature as ngrok.com or
+trycloudflare.com), not a private value. That is why the gate `test/no-private-values.sh` exempts this
+one subdomain of `dsh.lycheeledger.cn` — and the exemption is **exact**: the host is stripped and the
+rules are re-run, so **any other subdomain of the same domain** (anything that is not the `dsh` one)
+still counts as a leak, as do server IPs, private keys, and local paths.
+
+**Default is not the only option.** Two ways to point elsewhere, neither needs a code change:
+
+| Form | Result |
+| --- | --- |
+| `--relay` (no value) / `--tunnel relay` / empty url in config | the official exit |
+| `--relay official` / `--relay default` | the official exit (explicit form) |
+| `--relay https://your-exit.example.com` | your own exit |
+| config `public.relay.url: https://your-exit.example.com` | same as the line above |
+
+**The panel must label the official exit** (`relay.exitOfficial`) — the default exit is the author's
+machine, and a user has the right to know who they are trusting; we do not pick that for them silently.
+Do not drop that label; `test/verify.mjs` asserts it.
+
+To run your own exit for other people: the service is `relay/server.mjs` in this repo (deployment in
+§6) — hand the address to whoever you invite.
+

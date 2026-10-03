@@ -179,6 +179,26 @@ const STATE_RELAY = {
   error: null,
 }
 
+/** 官方出口（默认出口）：出口地址是官方的，面板要把它标出来。 */
+const STATE_RELAY_OFFICIAL = {
+  ...STATE_RELAY,
+  public: {
+    ...STATE_RELAY.public,
+    entry: 'https://alice.relay.exit.example.com/?k=9f2c41ab77e34d0e',
+    relay: {
+      ...STATE_RELAY.public.relay,
+      url: 'https://relay.dsh.lycheeledger.cn',
+      official: true,
+      entry: 'https://alice.relay.exit.example.com/?k=9f2c41ab77e34d0e',
+    },
+    tunnel: {
+      ...STATE_RELAY.public.tunnel,
+      publicUrl: 'https://alice.relay.exit.example.com/',
+    },
+  },
+  qr: qrRows('https://alice.relay.exit.example.com/?k=9f2c41ab77e34d0e'),
+}
+
 /** tailscale 零交付模式：没有自己的域名，地址来自 funnel。 */
 const STATE_TAILSCALE = {
   ok: true,
@@ -230,7 +250,7 @@ const PAGE = (stateJson, frameHeight, shotMode, zoom, dark) => `<!doctype html>
   <div class="note">
     <h3>client 半真浏览器预览</h3>
     <p>左侧是模拟的侧栏底部：先渲染「远程连接」入口，再打开面板（数据是假的，扫码链接也是假的）。</p>
-    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=tailscale">tailscale 零交付</a> · <a href="/?mode=tenants">多租户</a> · <a href="/?mode=down">隧道掉线（红灯）</a> · <a href="/?mode=off">未开启服务（橙灯）</a> · <a href="/?dark=1">深色模式</a></p>
+    <p>换后端预览：<a href="/">ssh 自建服务器</a> · <a href="/?mode=relay">共享出口</a> · <a href="/?mode=relay&amp;official=1">共享出口（官方）</a> · <a href="/?mode=tailscale">tailscale 零交付</a> · <a href="/?mode=tenants">多租户</a> · <a href="/?mode=down">隧道掉线（红灯）</a> · <a href="/?mode=off">未开启服务（橙灯）</a> · <a href="/?dark=1">深色模式</a></p>
     <p>这份页面按 client-modules 的方式装载 bundle：先 <code>window.__ModuleLoader__.load({id, factory})</code>，
        再用真实 React 渲染 <code>apply()</code> 注册进槽位的组件。</p>
     <p id="status">…</p>
@@ -322,7 +342,9 @@ const server = http.createServer((req, res) => {
       PAGE(
         JSON.stringify(
           url.searchParams.get('mode') === 'relay'
-            ? STATE_RELAY
+            ? url.searchParams.get('official') === '1'
+              ? STATE_RELAY_OFFICIAL
+              : STATE_RELAY
             : url.searchParams.get('mode') === 'tailscale'
             ? STATE_TAILSCALE
             : url.searchParams.get('mode') === 'tenants'

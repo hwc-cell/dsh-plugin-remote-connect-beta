@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 > ⚠️ **Read this first.** This plugin exposes an agent that **runs commands and reads/writes files on your machine** to the network. If it is compromised, your machine is compromised. Treat it as "publishing a host that can execute arbitrary commands", not as an ordinary web tool.
 >
-> There are **two routes to an entry**: a **shared exit** — someone you trust runs the exit, and you only install the plugin (no domain, no account, no server) — or a **self-hosted server** for anyone who will not hand their machine to an exit. The shared exit is the default because "a friend just wants to try it" should not require a VPS; it is also the route that gives the most to someone else, so read [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what) before you use it. No live instance address appears in these docs. Threat model, credential handling, and vulnerability reporting live in [SECURITY.md](SECURITY.md).
+> There are **two routes to an entry**: a **shared exit** — someone you trust runs the exit, and you only install the plugin (no domain, no account, no server) — or a **self-hosted server** for anyone who will not hand their machine to an exit. The shared exit is the default because "a friend just wants to try it" should not require a VPS; it is also the route that gives the most to someone else, so read [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what) before you use it. **With no exit given you use the official exit, `https://relay.dsh.lycheeledger.cn` (run by the project author)**; to use your own — or one someone gave you — add `--relay https://your-exit`. Who the exit is determines what it can see. Threat model, credential handling, and vulnerability reporting live in [SECURITY.md](SECURITY.md).
 
 Give a **DSH Harness** a remote entry point: over your local network, over the public internet through a **shared exit** you trust, or through **your own server**. Any phone, tablet, or computer with a modern browser can use it — no client to install, no VPN.
 
@@ -16,17 +16,19 @@ Two ways to use it, one shared core:
 ---
 
 ## How to get an entry: two routes
-> Already have an **exit address and an invite code** and want the shortest path? Follow [`docs/using-a-shared-exit.md`](docs/using-a-shared-exit.md) (the address and code come from whoever invited you).
+> Want the shortest path? Follow [`docs/using-a-shared-exit.md`](docs/using-a-shared-exit.md) — with **no exit address given you use the official exit** (`https://relay.dsh.lycheeledger.cn`, run by the author), so all you need is an invite code. An exit someone else gave you works too; pass its address along.
 
 
 The plugin is **installed by whoever wants a remote entry, on their own machine**. A Harness runs
 where it is installed, and it can execute commands there, so handing out access means handing out
 access to that computer. There are two ways to get the entry itself:
 
-- **Shared exit (the default, built for "a friend just wants to try it").** Someone you trust runs
+- **Shared exit (the default, built for "a friend just wants to try it").** Someone else runs
   the exit server; you only install the plugin — no domain to change, no account to create, no server
-  to configure. On first run the exit issues your access password and a name, and the entry looks like
-  `https://<name>.exit.example.com/`. The trade-off is in [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what):
+  to configure. **The default is the official exit, `https://relay.dsh.lycheeledger.cn` (run by the
+  project author)**; to use your own, or one someone gave you, add `--relay https://that-exit`. On
+  first run the exit issues your access password and a name, and the entry looks like
+  `https://<name>.<exit-domain>/`. The trade-off is in [Who the exit is, and who can see what](#who-the-exit-is-and-who-can-see-what):
   your traffic passes through that exit, and the exit operator can read and change it. Details:
   [`docs/relay.md`](docs/relay.md).
 - **Self-hosted server (for anyone who will not hand their machine to an exit).** Your own VPS and
@@ -34,8 +36,9 @@ access to that computer. There are two ways to get the entry itself:
   [`docs/self-host.md`](docs/self-host.md). Nothing of yours passes through anyone else's exit.
 
 Neither route needs an account of ours, and both are MIT-licensed and dependency-free: `npx
-dsh-plugin-remote-connect-beta serve` (LAN), `... serve --relay https://exit.example.com --invite
-<code>` (shared exit), or the self-hosted steps above are the whole onboarding.
+dsh-plugin-remote-connect-beta serve` (LAN), `... serve --relay --invite <code>` (shared exit; a bare
+`--relay` means the official exit, pass `--relay https://some-exit` to use another), or the
+self-hosted steps above are the whole onboarding.
 
 For the case where one machine genuinely serves several people (home server, shared workstation),
 the plugin has a multi-tenant layer: each tenant gets their **own** Harness process with its own
@@ -371,7 +374,7 @@ lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
 relay/server.mjs               Shared-exit identity service: invites, issuance, rotation; fingerprints only
-test/verify.mjs                Contract / render / generator assertions (241 of them)
+test/verify.mjs                Contract / render / generator assertions (245 of them)
 test/relay.mjs                 Shared-exit service + tunnel transport assertions
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository

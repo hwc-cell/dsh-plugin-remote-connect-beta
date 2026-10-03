@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process'
 import { createProxy, qrRows, defaultLogCandidates, lanAddresses } from '../lib/core/proxy.js'
 import { createTunnel } from '../lib/core/tunnel.js'
 import { createRelayTunnel } from '../lib/core/relayTunnel.js'
+import { isOfficialExit, resolveRelayUrl } from '../lib/core/officialExit.js'
 import { runPreflight } from '../lib/core/preflight.js'
 import { normalizeLocale, resolveLocale, translator } from '../lib/core/messages.js'
 import { buildServerSetupScript, buildServerUninstallScript } from '../lib/core/serversetup.js'
@@ -133,8 +134,12 @@ function tenantEntryFor(tenant, info, flags) {
 }
 
 async function commandServe(flags) {
-  const relayUrl = typeof flags.relay === 'string' ? flags.relay.trim().replace(/\/+$/, '') : ''
-  const relayMode = relayUrl !== ''
+  // 默认出口：`--relay` 不带值、`--tunnel relay` 不带地址、或 `--relay official`
+  // 都落到官方出口（lib/core/officialExit.js）。给了地址就是自定义出口。
+  const relayRequested = flags.relay === true || typeof flags.relay === 'string' || flags.tunnel === 'relay'
+  const relayUrl = relayRequested ? resolveRelayUrl(flags.relay === true ? '' : flags.relay) : ''
+  const relayMode = relayRequested
+  const relayOfficial = relayMode && isOfficialExit(relayUrl)
   const multi = flags.multi === true
   const isPublic = flags.public === true || relayMode
   let accessKey = typeof flags.key === 'string' ? flags.key : ''
@@ -178,6 +183,25 @@ async function commandServe(flags) {
     tenantRouter = { findById: (id) => tenancy.handle(id), findByKey: (key) => tenancy.findByKey(key) }
   }
 
+  // relay：**先**拿出口签发的凭据（没有就登记一次），**再**建代理 —— 顺序不能反：
+  // 代理的访问口令门是用这把口令建的，先建代理就等于门开着（实测过：不带 ?k= 也能直接进）。
+  // 登记失败直接报错退出（一次性邀请码，不重试）。
+  let relayCredential = null
+  if (relayMode) {
+    try {
+      relayCredential = await ensureRelayCredential({
+        url: relayUrl,
+        invite: typeof flags.invite === 'string' ? flags.invite : '',
+        name: typeof flags.name === 'string' ? flags.name : '',
+        file: path.join(pluginStateDir(), 'access-key.json'),
+      })
+    } catch (error) {
+      fail(String(error?.message ?? error))
+    }
+    accessKey = relayCredential.accessKey
+    process.stderr.write('· 出口登记完成：' + relayCredential.subdomain + '\n')
+  }
+
   const proxy = createProxy({
     port,
     upstreamPort,
@@ -196,23 +220,6 @@ async function commandServe(flags) {
   if (multi) {
     const started = tenancy.startAutostart()
     process.stderr.write('· ' + t('cli.multi.started', { count: String(started.length) }) + '\n')
-  }
-
-  // relay：先拿出口签发的凭据（没有就登记一次），再拨隧道。登记失败直接报错退出。
-  let relayCredential = null
-  if (relayMode) {
-    try {
-      relayCredential = await ensureRelayCredential({
-        url: relayUrl,
-        invite: typeof flags.invite === 'string' ? flags.invite : '',
-        name: typeof flags.name === 'string' ? flags.name : '',
-        file: path.join(pluginStateDir(), 'access-key.json'),
-      })
-    } catch (error) {
-      fail(String(error?.message ?? error))
-    }
-    accessKey = relayCredential.accessKey
-    process.stderr.write('· 出口登记完成：' + relayCredential.subdomain + '\n')
   }
 
   let tunnel = null
@@ -284,7 +291,12 @@ async function commandServe(flags) {
       printQr(info.lanUrl)
     }
     if (relayMode && relayCredential !== null) {
-      process.stdout.write(t('cli.serve.relayExit', { url: relayUrl, name: relayCredential.subdomain }) + '\n')
+      process.stdout.write(
+        t(relayOfficial ? 'cli.serve.relayExitOfficial' : 'cli.serve.relayExit', {
+          url: relayUrl,
+          name: relayCredential.subdomain,
+        }) + '\n',
+      )
     }
     if (publicBase !== null) {
       const entryUrl = publicBase + (accessKey === '' ? '' : '?k=' + accessKey)

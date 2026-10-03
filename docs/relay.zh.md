@@ -2,7 +2,8 @@
 
 > 这份文档写给要改这段代码的人（包括 AI）。它解释**为什么**这么设计，不只是做了什么。
 >
-> 状态：**M1（身份服务）与 M2（隧道传输）已实现；插件出口与出口部署待做。** 下面每节都标了落地阶段。
+> 状态：**M1–M5 全部落地** —— 身份服务、双工隧道、插件第 4 个出口引擎、出口部署、文档。
+> **默认走官方出口（见 §7）**；自带服务器那条路照旧保留给不愿意把机器交给出口的人。
 
 ## 1. 要解决的问题
 
@@ -11,8 +12,9 @@
 
 所以要有一条**共享出口**：出口由一方托管，别人只需要装插件 —— 不改域名、不注册账号、不配服务器。
 
-—— 这条与 README 里"作者不托管、不中转"的旧口径**冲突**。那句话要改：现在是
-**默认走共享出口，同时保留自带服务器这条更硬的路**（不信任出口的人应该走自建）。
+—— 这条与 README 里"作者不托管、不中转"的旧口径**冲突**，那句话已经改掉。现在的口径是：
+**默认走共享出口，默认出口由项目作者托管**（地址见 §7），同时保留自带服务器这条更硬的路
+（不信任出口的人应该走自建）。
 
 ## 2. 拓扑
 
@@ -73,9 +75,10 @@
 | --- | --- | --- |
 | **M1** | 身份服务：邀请码、签发（名字 + 口令）、轮换、登记表（只存指纹） | ✅ 本目录 `relay/server.mjs` |
 | **M2** | 隧道传输：插件拨出 → 出口把请求喂进去（双向流式） | ✅ `lib/core/relayTunnel.js` + `relay/server.mjs` |
-| **M3** | 插件第 4 个出口引擎 `relay`：`enroll` 一次 → 存口令 → 拨隧道 → 面板显示链接与二维码 | 待做 |
-| **M4** | 出口部署：frp/nginx 通配块、`*.dsh.example.com` 通配 DNS、证书 | 待做 |
-| **M5** | 文档：README 定位改写 + 风险表 + `docs/self-host` 对照 | 待做 |
+| **M3** | 插件第 4 个出口引擎 `relay`：`enroll` 一次 → 存口令 → 拨隧道 → 面板显示链接与二维码 | ✅ |
+| **M4** | 出口部署：nginx 通配块、`*.dsh.example.com` 通配 DNS、通配证书 | ✅ |
+| **M5** | 文档：README 定位改写 + 风险表 + `docs/self-host` 对照 | ✅ |
+| **M6** | 官方出口成为**默认**（可一键换），门禁对官方域名单独放行 | ✅ 见 §7 |
 
 ## 6. 部署（M4 时要跑的命令，先记着）
 
@@ -92,8 +95,39 @@ node relay/server.mjs --state /var/lib/dsh-relay/state.json --list         # 看
 使用者拿到的是一条命令：
 
 ```bash
-npx dsh-plugin-remote-connect-beta serve --relay wss://exit.example.com/relay --invite <邀请码>
-# → https://<名字>.exit.example.com/?k=<口令>
+npx dsh-plugin-remote-connect-beta serve --relay --invite <邀请码>          # 官方出口（默认）
+npx dsh-plugin-remote-connect-beta serve --relay https://my-exit.example.com --invite <邀请码>
+# → https://<名字>.<出口域名>/?k=<口令>
 ```
 
 他自己不用改域名、不用注册、不用装客户端。
+
+## 7. 官方出口（默认）—— 全仓库唯一出现真实地址的地方
+
+**默认出口 = 官方出口**，不填 `public.relay.url` 时自动用它。地址只写在
+`lib/core/officialExit.js` 一个文件里：
+
+```js
+export const OFFICIAL_EXIT_URL = 'https://relay.dsh.lycheeledger.cn'
+```
+
+为什么它可以进公开仓库：它是**公开的产品端点**（性质同 ngrok.com / trycloudflare.com），不是私有值。
+门禁 `test/no-private-values.sh` 因此对 `dsh.lycheeledger.cn` 这一个子域单独放行 ——
+注意放行是**精确**的：门禁把官方这个主机名抠掉之后会再判一次，所以**同域名的任何其它子域**
+（只要不是 `dsh` 那个）照旧算泄漏，服务器 IP / 私钥 / 本机路径也一律照抓。
+
+**默认 ≠ 唯一。** 换出口有两条路，都不用改代码：
+
+| 写法 | 结果 |
+| --- | --- |
+| `--relay`（不带值）/ `--tunnel relay` / 配置里 url 留空 | 官方出口 |
+| `--relay official` / `--relay default` | 官方出口（显式写法） |
+| `--relay https://your-exit.example.com` | 你自己的出口 |
+| 配置 `public.relay.url: https://your-exit.example.com` | 同上一行 |
+
+**面板必须把「官方出口」标出来**（`relay.exitOfficial`）—— 默认出口是作者的机器，用户有权知道自己在信任谁，
+不能默默替他用。改这块时别把这个标记删掉，`test/verify.mjs` 有断言守着。
+
+把自己搭的出口给别人用（自建出口）：出口服务就在本仓库 `relay/server.mjs`，
+部署步骤见 §6；把地址发给你要邀请的人即可。
+
