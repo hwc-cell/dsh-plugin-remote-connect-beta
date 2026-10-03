@@ -32,6 +32,10 @@ The first run trades the invite for **your name + an access password**: the pass
 the local state file before it is ever displayed**. The invite is now spent — remove it from the
 config; the plugin reuses the stored credential and never re-registers.
 
+> To switch exits (to someone else's, or back to the official one) **you do not touch the config**:
+> the panel's *Exit address* field is pre-filled with the current exit — point it elsewhere, and put
+> that exit's invite code in the box beside it. See `docs/relay.md` §7.
+
 ### B. One command (works without DSH installed)
 
 ```bash

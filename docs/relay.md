@@ -143,3 +143,24 @@ Do not drop that label; `test/verify.mjs` asserts it.
 To run your own exit for other people: the service is `relay/server.mjs` in this repo (deployment in
 §6) — hand the address to whoever you invite.
 
+### Switching exits from the panel (that field is filled with the official exit by default)
+
+The panel's **Exit address** field comes **pre-filled with the official exit**; you can point it at
+someone else's:
+
+| What you type there | What you get |
+| --- | --- |
+| The official exit address (the default — leave it alone) / empty / `official` / `default` | The official exit |
+| Someone else's exit address (`https://` optional) | Theirs — the tunnel is re-dialled on the new exit **immediately**, so the link drops for a moment |
+
+- The **invite code** box next to it is for switching: paste the one-time invite that exit gave you.
+  Without it you cannot be registered there, and the tunnel will not come up. Once an exit has
+  registered you, you never need it again. The old exit's access password does not work on the new
+  one — the panel registers you there again, and switching back picks up the stored credential.
+- Switching writes a **state file** (`$DSH_HOME/remote-connect/relay-exit.json`, 0600) — it never
+  touches your `cordis.patch.yml`. The `url` in the config is only a seed; the runtime truth lives in
+  the state file (the same rule as the access password).
+- The field hides no default: the official exit is the author's machine, so it is always labelled.
+- On the wire this is one **new** route: `POST /remote-connect/api/relay` (body `{url, invite?}`,
+  host window only). No other route or response shape changed.
+

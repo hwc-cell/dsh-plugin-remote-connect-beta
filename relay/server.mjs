@@ -16,9 +16,14 @@
  *
  * 用法：
  *   node relay/server.mjs --state /var/lib/dsh-relay/state.json --port 8790 --base-domain dsh.example.com
- *   node relay/server.mjs --state <file> --new-invite     # 发一个邀请码
- *   node relay/server.mjs --state <file> --list           # 看登记表（不含口令）
- *   node relay/server.mjs --state <file> --revoke alice   # 吊销一个名字
+ *   node relay/server.mjs --state <file> --new-invite [--ttl <天>]   # 发一个邀请码（默认 14 天有效期）
+ *   node relay/server.mjs --state <file> --invites                   # 看所有邀请码的状态（本机管理员）
+ *   node relay/server.mjs --state <file> --list                      # 看登记表（不含口令）
+ *   node relay/server.mjs --state <file> --revoke alice              # 吊销一个名字
+ *
+ * 服务模式加 --admin-token-file <文件>（或环境变量 DSH_RELAY_ADMIN_TOKEN）才会开
+ * `POST /relay/admin/invite`（发码）与 `POST /relay/admin/invite/status`（查状态）——
+ * 给"关联了账户"的那一边（荔枝记账）用。**不配令牌 = 这两个接口不存在**。
  */
 import http from 'node:http'
 import fs from 'node:fs'
@@ -36,20 +41,60 @@ export function fingerprintKey(value) {
 }
 
 /**
- * 指纹的等值比较。指纹是固定 16 位十六进制，长度不等直接判否；
+ * 两个秘密的等值比较（指纹 / 管理令牌）：长度不等直接判否；
  * 长度相等时用 timingSafeEqual —— 别让 `===` 的短路时序泄漏"前几位对了"。
- * 注意：指纹是口令的 sha256 前缀，即便泄漏也还原不出口令，这里纯属纵深防御。
  */
-function fingerprintEquals(a, b) {
+function secretEquals(a, b) {
   const left = Buffer.from(asString(a), 'utf8')
   const right = Buffer.from(asString(b), 'utf8')
   if (left.length === 0 || left.length !== right.length) return false
   return crypto.timingSafeEqual(left, right)
 }
 
+/**
+ * 指纹的等值比较。指纹是固定 16 位十六进制，长度不等直接判否；
+ * 注意：指纹是口令的 sha256 前缀，即便泄漏也还原不出口令，这里纯属纵深防御。
+ */
+function fingerprintEquals(a, b) {
+  return secretEquals(a, b)
+}
+
+/** 从 Authorization: Bearer <token> 里取令牌（大小写不敏感的 scheme）。 */
+function bearerToken(req) {
+  const header = asString(req.headers?.authorization).trim()
+  const match = /^Bearer[ \t]+(.+)$/i.exec(header)
+  return match === null ? '' : match[1].trim()
+}
+
 /** 32 位 URL 安全随机串 ≈ 192 bit。与 lib/core/tenant.js 的 generateAccessKey 同形。 */
 export function generateAccessKey() {
   return crypto.randomBytes(24).toString('base64url')
+}
+
+/** 邀请码默认有效期（天）。管理员可以按次指定；0 / 'never' = 永不过期。 */
+export const DEFAULT_INVITE_TTL_DAYS = 14
+/** 有效期上限：拿着管理令牌也不该发出"永久"的码（想延长就再发一张）。 */
+export const MAX_INVITE_TTL_DAYS = 365
+
+/**
+ * 把「天数」归一化成 expiresAt。
+ * @param {unknown} ttlDays 天数；0 / null / 'never' → 永不过期（返回 null）
+ * @returns {string|null} ISO 时间；null = 不过期
+ */
+export function inviteExpiresAt(ttlDays) {
+  if (ttlDays === null || ttlDays === undefined || ttlDays === 0 || ttlDays === 'never') return null
+  const days = Number(ttlDays)
+  if (!Number.isFinite(days) || days <= 0) return null
+  const capped = Math.min(days, MAX_INVITE_TTL_DAYS)
+  return new Date(Date.now() + Math.round(capped * 24 * 3600 * 1000)).toISOString()
+}
+
+/** 这个邀请码记录过期了吗（没有 expiresAt 字段 = 老记录，按不过期算）。 */
+export function inviteExpired(record, now = Date.now()) {
+  const expiresAt = record === null || record === undefined ? null : record.expiresAt
+  if (typeof expiresAt !== 'string' || expiresAt === '') return false
+  const at = Date.parse(expiresAt)
+  return Number.isFinite(at) && at <= now
 }
 
 function generateInvite() {
@@ -162,12 +207,49 @@ export function createIdentityStore(options = {}) {
   }
 
   return {
-    /** 管理员侧：发一个一次性邀请码。 */
-    newInvite() {
+    /**
+     * 管理员侧：发一个一次性邀请码。
+     *
+     * 先重读磁盘再写：CLI 与服务是两个进程，不重读会把对方刚写的东西覆盖掉
+     * （服务那条路径没这个问题 —— 它是唯一写者，管理接口就在它进程里）。
+     * @param {{ttlDays?: number|string|null}} [options] 有效期（天）；不传 = 默认 14 天
+     * @returns {string} 邀请码
+     */
+    newInvite(options = {}) {
+      reloadFromDisk()
       const code = generateInvite()
-      state.invites[code] = { createdAt: new Date().toISOString(), usedAt: null, usedBy: null }
+      const ttlDays = options.ttlDays === undefined ? DEFAULT_INVITE_TTL_DAYS : options.ttlDays
+      state.invites[code] = {
+        createdAt: new Date().toISOString(),
+        usedAt: null,
+        usedBy: null,
+        expiresAt: inviteExpiresAt(ttlDays),
+      }
       saveState(file, state)
       return code
+    },
+
+    /**
+     * 管理员侧：问一个邀请码现在什么状态。
+     *
+     * 为什么要它：荔枝那边靠它判断「这个人手上是不是还压着一张能用的」，
+     * 不然只能瞎猜（码是一次性的，"我用过了"这件事只有出口知道）。
+     * 不回显码本身，也不支持列举 —— 只能拿着码来问。
+     * @param {string} code
+     */
+    inviteStatus(code) {
+      reloadFromDisk()
+      const key = asString(code).trim().toUpperCase()
+      const record = key === '' ? undefined : state.invites[key]
+      if (record === undefined) return { ok: true, exists: false, used: false, expired: false, usedBy: null, expiresAt: null }
+      return {
+        ok: true,
+        exists: true,
+        used: record.usedAt !== null && record.usedAt !== undefined,
+        expired: inviteExpired(record),
+        usedBy: asString(record.usedBy) || null,
+        expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : null,
+      }
     },
 
     /** 管理员侧：吊销（名字连同它的口令一起作废；指纹进退休区，永不再发）。 */
@@ -203,6 +285,7 @@ export function createIdentityStore(options = {}) {
       const record = state.invites[code]
       if (record === undefined) return { ok: false, error: '邀请码无效' }
       if (record.usedAt !== null) return { ok: false, error: '邀请码已经用过了（一个码只能给一个人）' }
+      if (inviteExpired(record)) return { ok: false, error: '邀请码已过期（过了有效期，重新领一张）' }
       const subdomain = pickSubdomain(requestedName)
       const accessKey = issueKey(subdomain)
       state.users[subdomain] = {
@@ -252,11 +335,34 @@ export function createIdentityStore(options = {}) {
       return fingerprintEquals(fingerprintKey(asString(accessKey)), user.keyFingerprint)
     },
 
+    /**
+     * 管理侧：把所有邀请码的状态列出来（含码本身）—— 只给"在服务器本机跑"的管理员用。
+     * @returns {Array<{code: string, createdAt: string|null, expiresAt: string|null, expired: boolean, usedBy: string|null}>}
+     */
+    invites() {
+      reloadFromDisk()
+      return Object.entries(state.invites).map(([code, record]) => ({
+        code,
+        createdAt: typeof record?.createdAt === 'string' ? record.createdAt : null,
+        expiresAt: typeof record?.expiresAt === 'string' ? record.expiresAt : null,
+        expired: inviteExpired(record),
+        usedBy: asString(record?.usedBy) || null,
+      }))
+    },
+
     stats() {
+      // 也重读磁盘：/relay/health 是给人看的（面板、巡检、监控），
+      // 管理员用 CLI 改了文件而服务还报旧数字，比不报还坏（2026-10-03 实测踩到）。
+      reloadFromDisk()
+      const invites = Object.values(state.invites)
+      const unused = invites.filter((item) => item.usedAt === null)
       return {
         users: Object.keys(state.users).length,
-        invites: Object.keys(state.invites).length,
-        unusedInvites: Object.values(state.invites).filter((item) => item.usedAt === null).length,
+        invites: invites.length,
+        unusedInvites: unused.length,
+        // 「还能用」= 没被用过、也没过期。看这个数才有意义（老字段保留给既有断言/文档）。
+        usableInvites: unused.filter((item) => inviteExpired(item) === false).length,
+        expiredInvites: unused.filter((item) => inviteExpired(item) === true).length,
       }
     },
   }
@@ -380,6 +486,13 @@ export function createRelayServer(options) {
   // 单条隧道同时在飞（还没回完）的公网请求上限，防止一个访客把 pending 表撑爆。
   const maxPending = Number.isInteger(options.maxPending) && options.maxPending > 0 ? options.maxPending : 256
   const allow = createLimiter()
+  // 管理接口单独限流：一个令牌就能无限发码，比 enroll 敏感得多
+  const allowAdmin = createLimiter({ windowMs: 60_000, max: 20 })
+  /**
+   * 管理令牌。**没配 = 管理接口根本不存在**（默认关闭）——
+   * 这把钥匙能无限发邀请码（= 无限占名字），不能靠"忘了配"来兜底。
+   */
+  const adminToken = asString(options.adminToken)
   /** 子域 → 隧道。只在内存里，进程重启即清空（连接本来就断了）。 */
   const tunnels = new Map()
   let nextRequestId = 0
@@ -635,6 +748,46 @@ export function createRelayServer(options) {
         sendJson(res, 200, { ok: true, ...store.stats() })
         return
       }
+      if (route === '/relay/admin/invite' || route === '/relay/admin/invite/status') {
+        // 管理侧（给「关联了账户」的那一边用）：发码 / 查一个码的状态。
+        // 三条防线：没配令牌 = 404（默认关闭）、按 IP 限流、令牌等值比较走 timingSafeEqual。
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, error: '请用 POST' })
+          return
+        }
+        if (adminToken === '') {
+          sendJson(res, 404, { ok: false, error: '没有这个接口' })
+          return
+        }
+        const adminIp = clientIpFor(req)
+        if (!allowAdmin(adminIp)) {
+          sendJson(res, 429, { ok: false, error: '请求太频繁，稍后再试' })
+          return
+        }
+        if (!secretEquals(bearerToken(req), adminToken)) {
+          sendJson(res, 401, { ok: false, error: '管理令牌不对' })
+          return
+        }
+        let adminBody = {}
+        try {
+          adminBody = JSON.parse((await readBody(req)) || '{}')
+        } catch {
+          sendJson(res, 400, { ok: false, error: '请求体不是 JSON' })
+          return
+        }
+        if (typeof adminBody !== 'object' || adminBody === null) adminBody = {}
+        if (route === '/relay/admin/invite/status') {
+          sendJson(res, 200, store.inviteStatus(adminBody.code))
+          return
+        }
+        const ttlDays = adminBody.ttlDays === undefined ? DEFAULT_INVITE_TTL_DAYS : adminBody.ttlDays
+        const code = store.newInvite({ ttlDays })
+        const info = store.inviteStatus(code)
+        // 只记「发了码」这件事，绝不记码本身（日志里出现码等于泄漏一张入场券）
+        log('admin: invite issued (ttlDays=' + String(ttlDays) + ')')
+        sendJson(res, 200, { ok: true, code, expiresAt: info.expiresAt })
+        return
+      }
       const ip = clientIpFor(req)
       if (route === '/relay/enroll' || route === '/relay/rotate') {
         if (req.method !== 'POST') {
@@ -731,6 +884,27 @@ function parseFlags(argv) {
   return flags
 }
 
+/**
+ * 管理令牌从哪来：`--admin-token-file <文件>`（取第一行）优先，其次环境变量
+ * `DSH_RELAY_ADMIN_TOKEN`；都没有 → 返回空串 = 管理接口关闭。
+ *
+ * 文件读不到时返回空串（= 关闭）而不是抛错继续：**宁可服务起不来管理接口，
+ * 也不要因为配错了路径"没有令牌"地把发码接口敞着**。
+ * @param {Record<string, string|boolean>} flags
+ */
+function resolveAdminToken(flags) {
+  const file = typeof flags['admin-token-file'] === 'string' ? flags['admin-token-file'] : ''
+  if (file !== '') {
+    try {
+      return fs.readFileSync(file, 'utf8').split('\n')[0].trim()
+    } catch (error) {
+      process.stderr.write('[relay] 读不到管理令牌文件 ' + file + '：' + String(error.message) + '（管理接口保持关闭）\n')
+      return ''
+    }
+  }
+  return asString(process.env.DSH_RELAY_ADMIN_TOKEN).trim()
+}
+
 const isMain = process.argv[1] !== undefined && import.meta.url.endsWith(path.basename(process.argv[1]))
 if (isMain) {
   const flags = parseFlags(process.argv.slice(2))
@@ -739,7 +913,21 @@ if (isMain) {
   const store = createIdentityStore({ file, log })
 
   if (flags['new-invite'] === true) {
-    process.stdout.write(store.newInvite() + '\n')
+    // --ttl <天>：有效期；不给 = 默认 14 天；--ttl 0 / never = 不过期
+    const ttlDays = flags.ttl === undefined || flags.ttl === true ? DEFAULT_INVITE_TTL_DAYS : flags.ttl
+    const code = store.newInvite({ ttlDays })
+    process.stdout.write(code + '\n')
+    const info = store.inviteStatus(code)
+    process.stderr.write('[relay] 有效期：' + (info.expiresAt === null ? '不过期' : info.expiresAt) + '\n')
+  } else if (flags.invites === true) {
+    // 看还剩哪些码、什么时候到期、被谁用掉了（只在服务器本机跑，属管理员视角）
+    let usable = 0
+    for (const [code, record] of Object.entries(store.invites())) {
+      const state = record.usedBy !== null ? '已用(' + record.usedBy + ')' : record.expired === true ? '已过期' : '可用'
+      if (state === '可用') usable += 1
+      process.stdout.write([code, state, record.expiresAt === null ? '不过期' : record.expiresAt].join('\t') + '\n')
+    }
+    process.stdout.write('可用的码：' + String(usable) + ' 张\n')
   } else if (flags.list === true) {
     for (const user of store.list()) {
       process.stdout.write(
@@ -752,15 +940,22 @@ if (isMain) {
   } else {
     const port = Number(typeof flags.port === 'string' ? flags.port : 8790)
     const host = typeof flags.host === 'string' ? flags.host : '127.0.0.1' // 只给本机 nginx 用
+    const adminToken = resolveAdminToken(flags)
+    if (adminToken !== '' && adminToken.length < 24) {
+      process.stderr.write('[relay] ⚠️ 管理令牌太短（' + String(adminToken.length) + ' 字符）——建议至少 32 位随机串\n')
+    }
     const server = http.createServer(
       createRelayServer({
         store,
         baseDomain: typeof flags['base-domain'] === 'string' ? flags['base-domain'] : '',
+        adminToken,
         log,
       }),
     )
     server.listen(port, host, () => {
       log('身份服务在 http://' + host + ':' + String(port) + '（state=' + file + '）')
+      // 只报"开没开"，绝不回显令牌本身
+      log('管理接口（发码）：' + (adminToken === '' ? '关闭（没配令牌）' : '已开启 /relay/admin/invite'))
     })
   }
 }

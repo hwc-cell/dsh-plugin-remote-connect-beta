@@ -17,6 +17,9 @@ import {
   createRelayServer,
   fingerprintKey,
   generateAccessKey,
+  inviteExpired,
+  inviteExpiresAt,
+  DEFAULT_INVITE_TTL_DAYS,
   ACCESS_KEY_PATTERN,
 } from '../relay/server.mjs'
 import { createRelayTunnel } from '../lib/core/relayTunnel.js'
@@ -713,6 +716,164 @@ check(
   cliRevoked.ok === true && svcAfterRevoke === false,
   'revoke=' + JSON.stringify(cliRevoked) + ' verify=' + String(svcAfterRevoke),
 )
+// /relay/health 的数字也要跟着磁盘走：服务进程报旧数字比不报还坏
+check(
+  'CLI 吊销后：服务进程的 stats()（/relay/health 的来源）也立刻反映（users 归零）',
+  serviceStore.stats().users === 0,
+  'users=' + String(serviceStore.stats().users),
+)
+
+// ── 管理接口（发码）+ 邀请码有效期：给"关联了账户"的那一边（荔枝记账）用 ──
+// 注意：上面那批 server 已经 close 掉了（隧道测试收尾），这里自己起两个：
+// 一个没配令牌（验"默认关闭"），一个配了令牌（验发码/查状态/限流）。
+fs.mkdirSync(dir, { recursive: true }) // 上面的 rmSync 把临时目录删了，建回来
+const plainStore = createIdentityStore({ file: path.join(dir, 'plain-state.json'), log: () => {} })
+const plainServer = http.createServer(createRelayServer({ store: plainStore, baseDomain: 'dsh.example.com', sweepMs: 0 }))
+await new Promise((resolve) => plainServer.listen(0, '127.0.0.1', resolve))
+const plainBase = 'http://127.0.0.1:' + String(plainServer.address().port) + '/relay'
+const noAdmin = await fetch(plainBase + '/admin/invite', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: '{}',
+}).then(async (r) => ({ status: r.status, payload: await r.json() }))
+check(
+  '管理接口默认关闭：没配令牌时 /relay/admin/invite 根本不存在（404，不是 401）',
+  noAdmin.status === 404,
+  'HTTP ' + String(noAdmin.status) + ' ' + String(noAdmin.payload.error),
+)
+plainServer.close()
+
+const ADMIN_TOKEN = 'admin-token-0123456789abcdefghij'
+const adminStore = createIdentityStore({ file: path.join(dir, 'admin-state.json'), log: () => {} })
+const adminRelay = createRelayServer({
+  store: adminStore,
+  baseDomain: 'dsh.example.com',
+  adminToken: ADMIN_TOKEN,
+  sweepMs: 0,
+})
+const adminServer = http.createServer(adminRelay)
+await new Promise((resolve) => adminServer.listen(0, '127.0.0.1', resolve))
+const adminBase = 'http://127.0.0.1:' + String(adminServer.address().port) + '/relay'
+const adminPostBase = (route, body, token) =>
+  fetch(adminBase + route, {
+    method: 'POST',
+    headers:
+      token === undefined
+        ? { 'content-type': 'application/json' }
+        : { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify(body ?? {}),
+  }).then(async (r) => ({ status: r.status, payload: await r.json() }))
+/** 这一分钟里被限流器放过的管理请求数（最后一条限流断言要用它，不能只数循环次数）。 */
+let adminAllowed = 0
+const adminPost = async (route, body, token) => {
+  const res = await adminPostBase(route, body, token)
+  if (res.status !== 429) adminAllowed += 1
+  return res
+}
+
+const noToken = await adminPost('/admin/invite', {})
+const badToken = await adminPost('/admin/invite', {}, 'not-the-token-not-the-token')
+check(
+  '管理接口：没令牌 / 错令牌 → 401（配了令牌才存在，但没令牌照样进不来）',
+  noToken.status === 401 && badToken.status === 401,
+  'HTTP ' + String(noToken.status) + ' / ' + String(badToken.status),
+)
+
+const adminIssued = await adminPost('/admin/invite', {}, ADMIN_TOKEN)
+const issuedDays = adminIssued.payload.expiresAt === null ? 0 : (Date.parse(adminIssued.payload.expiresAt) - Date.now()) / 86400000
+check(
+  '管理接口：拿着令牌发码 → 200，返回码 + 有效期（默认 14 天）',
+  adminIssued.status === 200 && /^[A-Z0-9]{10}$/.test(String(adminIssued.payload.code)) && issuedDays > 13.9 && issuedDays < 14.1,
+  'code=' + String(adminIssued.payload.code) + ' 有效期≈' + issuedDays.toFixed(2) + ' 天',
+)
+const shortTtl = await adminPost('/admin/invite', { ttlDays: 3 }, ADMIN_TOKEN)
+const shortDays = shortTtl.payload.expiresAt === null ? 0 : (Date.parse(shortTtl.payload.expiresAt) - Date.now()) / 86400000
+check(
+  '管理接口：有效期可以设置（ttlDays=3 → 3 天）',
+  shortTtl.status === 200 && shortDays > 2.9 && shortDays < 3.1,
+  '有效期≈' + shortDays.toFixed(2) + ' 天',
+)
+const neverTtl = await adminPost('/admin/invite', { ttlDays: 0 }, ADMIN_TOKEN)
+check(
+  '管理接口：ttlDays=0 → 不过期（expiresAt 为 null），照旧能用',
+  neverTtl.status === 200 && neverTtl.payload.expiresAt === null,
+  'expiresAt=' + JSON.stringify(neverTtl.payload.expiresAt),
+)
+
+const statusBefore = await adminPost("/admin/invite/status", { code: adminIssued.payload.code }, ADMIN_TOKEN)
+const used = await fetch(adminBase + '/enroll', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ invite: adminIssued.payload.code, name: 'ivy' }),
+}).then(async (r) => ({ status: r.status, payload: await r.json() }))
+const statusAfter = await adminPost("/admin/invite/status", { code: adminIssued.payload.code }, ADMIN_TOKEN)
+const statusUnknown = await adminPost('/admin/invite/status', { code: 'NOSUCHCODE' }, ADMIN_TOKEN)
+check(
+  '管理接口：发出去的码能正常登记（200 + 名字/口令）',
+  used.status === 200 && used.payload.subdomain === 'ivy' && typeof used.payload.accessKey === 'string',
+  'HTTP ' + String(used.status) + ' subdomain=' + String(used.payload.subdomain),
+)
+check(
+  '管理接口：查码状态 —— 用之前 used=false，用之后 used=true 且带 usedBy；不存在的码 exists=false',
+  statusBefore.payload.exists === true &&
+    statusBefore.payload.used === false &&
+    statusAfter.payload.used === true &&
+    statusAfter.payload.usedBy === 'ivy' &&
+    statusUnknown.payload.exists === false,
+  JSON.stringify({ before: statusBefore.payload.used, after: statusAfter.payload.used, by: statusAfter.payload.usedBy }),
+)
+
+// 有效期：过期的码不能再用（拿一份"过期码"的状态文件喂给 store，确定性最高，不靠等）
+const expiredFile = path.join(dir, 'expired-state.json')
+fs.writeFileSync(
+  expiredFile,
+  JSON.stringify({
+    version: 1,
+    invites: {
+      OLDCODE123: { createdAt: '2020-01-01T00:00:00.000Z', usedAt: null, usedBy: null, expiresAt: '2020-01-02T00:00:00.000Z' },
+    },
+    users: {},
+  }),
+)
+const expiredStore = createIdentityStore({ file: expiredFile, log: () => {} })
+const expiredEnroll = expiredStore.enroll('OLDCODE123', 'late')
+check(
+  '邀请码有效期：过期的码被拒，错误可读（不是说"无效"，是"过期"）',
+  expiredEnroll.ok === false && /过期/.test(expiredEnroll.error),
+  String(expiredEnroll.error),
+)
+const expiredStats = expiredStore.stats()
+check(
+  '邀请码有效期：过期的不算"可用"（stats 分开计数，面板/巡检才看得出实情）',
+  expiredStats.usableInvites === 0 && expiredStats.expiredInvites === 1 && expiredStats.unusedInvites === 1,
+  JSON.stringify(expiredStats),
+)
+check(
+  '邀请码有效期：老记录（没有 expiresAt 字段 / 为 null）按"不过期"算 —— 不能一夜之间把存量码全废了',
+  inviteExpired({}) === false && inviteExpired({ expiresAt: null }) === false && inviteExpired({ expiresAt: '2999-01-01T00:00:00.000Z' }) === false,
+  'ok',
+)
+const ttl14 = (Date.parse(inviteExpiresAt(DEFAULT_INVITE_TTL_DAYS)) - Date.now()) / 86400000
+const ttlCap = (Date.parse(inviteExpiresAt(99999)) - Date.now()) / 86400000
+check(
+  '邀请码有效期：默认 14 天、上限 365 天（拿着令牌也发不出"永久"码）',
+  ttl14 > 13.9 && ttl14 < 14.1 && ttlCap > 364 && ttlCap < 366 && inviteExpiresAt('never') === null && inviteExpiresAt(-5) === null,
+  '默认≈' + ttl14.toFixed(2) + ' 天，上限≈' + ttlCap.toFixed(0) + ' 天',
+)
+
+// 管理接口单独限流（放最后：它会把这一分钟的额度用掉）
+for (let i = 0; i < 25; i += 1) {
+  const res = await adminPost('/admin/invite', {}, 'wrong-token-wrong-token-wrong')
+  if (res.status === 429) break
+}
+const rateLimited = await adminPost('/admin/invite', {}, ADMIN_TOKEN)
+check(
+  '管理接口：按 IP 限流，一分钟正好放过 20 次（之后令牌再对也 429）—— 挡住拿错令牌暴力试',
+  adminAllowed === 20 && rateLimited.status === 429,
+  '放过 ' + String(adminAllowed) + ' 次，之后 HTTP ' + String(rateLimited.status),
+)
+
+adminServer.close()
 
 process.stdout.write('\n' + String(passed) + ' 项通过，' + String(failed) + ' 项失败\n')
 if (failed > 0) process.exit(1)

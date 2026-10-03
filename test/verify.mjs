@@ -2236,6 +2236,14 @@ check(
   sshUnrelated.public.relay.url === '' && sshUnrelated.public.relay.official === false,
   'url=' + JSON.stringify(sshUnrelated.public.relay.url) + ' official=' + String(sshUnrelated.public.relay.official),
 )
+// 反向断言（2026-10-03 抓到的真 bug）：归一化不许把 relay 降级成 ssh。
+// 降级了的话，插件（面板）这条路上的共享出口整块都不会生效，而且启动会报"要域名"。
+const relayKeptMode = host.normalizeConfig({ public: { enabled: false, tunnel: 'relay' } })
+check(
+  'relay: 归一化后 public.tunnel 仍是 relay（漏了它就会被静默降级成 ssh）',
+  relayKeptMode.public.tunnel === 'relay',
+  'tunnel=' + JSON.stringify(relayKeptMode.public.tunnel),
+)
 const relayBadScheme = host.Config['~standard'].validate({
   public: { enabled: true, tunnel: 'relay', relay: { url: 'ftp://exit.example.com' } },
 })
@@ -2382,6 +2390,12 @@ check(
     ).join(', '),
 )
 check(
+  'relay: 入口链接完整可读 —— 「完整链接」不许是省略号截断的单行 input（改回 input 就红）',
+  relayPanel.includes('dshRcUrl isWrap') &&
+    relayPanel.includes('>https://alice.exit.example.com/?k=relay-key-0123456789<'),
+  'isWrap=' + String(relayPanel.includes('dshRcUrl isWrap')),
+)
+check(
   'relay: 反向断言 —— 口令说明走 relayHint（出口是权威），不是本机 key.hint',
   relayPanel.includes('«key.relayHint»') && relayPanel.includes('«key.hint»') === false,
 )
@@ -2420,6 +2434,166 @@ check(
   'relay: 官方出口在面板上被显式标出（不静默替用户选出口）',
   officialRelayPanel.includes('«relay.exitOfficial»') && officialRelayPanel.includes('«relay.exit»') === false,
   officialRelayPanel.includes('«relay.exitOfficial»') ? 'ok' : '没有标出官方出口',
+)
+
+// 10) 换出口：面板上「出口地址」那一栏（默认填官方出口，粘别人的地址就换成别人的）。
+//     写的是**状态文件**（不是用户的 cordis.patch.yml），并且立刻按新出口重拨隧道。
+async function bootRelayPlugin(rawConfig) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-exit-'))
+  const routes3 = []
+  const fakeCtx3 = {
+    logger: { info: () => {}, warn: () => {} },
+    get: () => undefined,
+    webServer: { port: idlePort, register: (route) => { routes3.push(route); return () => {} } },
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+  }
+  process.env.DSH_HOME = dataDir
+  const mod = await import(pathToFileURL(path.join(root, 'lib/index.js')).href + '?exit=' + String(Date.now()))
+  mod.apply(fakeCtx3, rawConfig)
+  const route = routes3.find((item) => item.path === API)
+  const server3 = http.createServer((req, res) => route.handler(req, res))
+  const port3 = await listen(server3)
+  const post = (p, body) =>
+    rawRequest('http://127.0.0.1:' + String(port3) + API + p, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    }).then((r) => ({ status: r.status, payload: JSON.parse(r.body || '{}') }))
+  const get = (p) =>
+    rawRequest('http://127.0.0.1:' + String(port3) + API + p).then((r) => ({
+      status: r.status,
+      payload: JSON.parse(r.body || '{}'),
+    }))
+  return { dataDir, post, get, close: () => server3.close() }
+}
+
+// enabled 刻意留 false：这里只测「换出口」这条路由，
+// 真开了公网入口它会去拨真隧道（联网 + 留下重连定时器），那是 e2e 的活。
+const exitHost = await bootRelayPlugin({ public: { enabled: false, tunnel: 'relay' } })
+const exitFile = path.join(exitHost.dataDir, 'remote-connect', 'relay-exit.json')
+const exitDefaultState = await exitHost.get('/state')
+check(
+  'relay 出口：默认就是官方出口 —— 面板拿到的是官方地址，且标着 official',
+  exitDefaultState.payload.public.relay.url === host.OFFICIAL_EXIT_URL &&
+    exitDefaultState.payload.public.relay.official === true,
+  'url=' + String(exitDefaultState.payload.public.relay.url),
+)
+const exitNoChange = await exitHost.post('/relay', { url: host.OFFICIAL_EXIT_URL })
+check(
+  'relay 出口：地址没变、又没给邀请码 → 400（服务器不接受\"点了没反应\"的请求）',
+  exitNoChange.status === 400,
+  'HTTP ' + String(exitNoChange.status) + ' ' + String(exitNoChange.payload.error),
+)
+const exitBadScheme = await exitHost.post('/relay', { url: 'ftp://exit.example.com' })
+check(
+  'relay 出口：不是 http(s) 的地址 → 400，且什么都不落盘',
+  exitBadScheme.status === 400 && fs.existsSync(exitFile) === false,
+  'HTTP ' + String(exitBadScheme.status) + ' 落盘=' + String(fs.existsSync(exitFile)),
+)
+// 手打地址给台阶：没写协议按 https:// 算（面板上用户不会去敲协议头）
+const exitBareHost = await exitHost.post('/relay', { url: 'my-exit.example.com/' })
+check(
+  'relay 出口：只写主机名 → 按 https:// 收下（手打地址的台阶），尾斜杠归一化',
+  exitBareHost.status === 200 && exitBareHost.payload.relay.url === 'https://my-exit.example.com',
+  'HTTP ' + String(exitBareHost.status) + ' url=' + String(exitBareHost.payload.relay.url),
+)
+const exitSwitched = await exitHost.post('/relay', { url: 'https://other-exit.example.com', invite: 'INVITE-TWO' })
+const exitAfterState = await exitHost.get('/state')
+const exitOnDisk = host.loadRelayExit(exitFile)
+check(
+  'relay 出口：粘别人的地址 → 换成别人的（official 变 false、状态文件记住、邀请码一并存下）',
+  exitSwitched.status === 200 &&
+    exitSwitched.payload.relay.url === 'https://other-exit.example.com' &&
+    exitSwitched.payload.relay.official === false &&
+    exitAfterState.payload.public.relay.url === 'https://other-exit.example.com' &&
+    exitOnDisk !== null &&
+    exitOnDisk.url === 'https://other-exit.example.com' &&
+    exitOnDisk.invite === 'INVITE-TWO',
+  'POST=' + JSON.stringify(exitSwitched.payload) + ' 盘上=' + JSON.stringify(exitOnDisk),
+)
+check(
+  'relay 出口：覆盖文件是 0600（里面还躺着没用掉的邀请码 —— 那等于一张入场券）',
+  (fs.statSync(exitFile).mode & 0o777) === 0o600,
+  'mode=' + (fs.statSync(exitFile).mode & 0o777).toString(8),
+)
+// 换回官方出口：'official' 别名与留空同义，且不用再给邀请码
+const exitBackOfficial = await exitHost.post('/relay', { url: 'official' })
+check(
+  'relay 出口：写 official（或留空）→ 换回官方出口（与配置里留空同一套语义）',
+  exitBackOfficial.status === 200 &&
+    exitBackOfficial.payload.relay.url === host.OFFICIAL_EXIT_URL &&
+    exitBackOfficial.payload.relay.official === true,
+  JSON.stringify(exitBackOfficial.payload.relay),
+)
+// 非 relay 模式不许改出口（那里根本没有出口这回事）
+const sshHost = await bootRelayPlugin({ public: { enabled: false, tunnel: 'ssh', domain: 'dsh.example.com', ssh: { user: 'u', host: 'dsh.example.com' } } })
+const exitNotRelay = await sshHost.post('/relay', { url: 'https://other-exit.example.com' })
+check(
+  'relay 出口：非 relay 模式 → 400（自建服务器那条路上没有"出口"可换）',
+  exitNotRelay.status === 400,
+  'HTTP ' + String(exitNotRelay.status) + ' ' + String(exitNotRelay.payload.error),
+)
+
+// 11) 凭据跟着出口走：旧出口签发的口令在新出口上不认（换回原出口才复用）
+const crossFile = path.join(relayDir, 'cross-exit.json')
+host.saveRelayCredential(crossFile, {
+  subdomain: 'alice',
+  accessKey: 'old-exit-key-0123456789',
+  entry: 'https://alice.a.example.com/?k=old-exit-key-0123456789',
+  exitUrl: 'https://a.example.com',
+})
+const enrollCountA = relayCalls.filter((item) => item.pathname === '/relay/enroll').length
+const reusedA = await host.ensureRelayCredential({ url: 'https://a.example.com/', invite: 'UNUSED', file: crossFile })
+const enrollCountA2 = relayCalls.filter((item) => item.pathname === '/relay/enroll').length
+check(
+  'relay 出口：同一个出口（尾斜杠不算差别）→ 直接用盘上的凭据，一次都不重新登记',
+  enrollCountA2 === enrollCountA && reusedA.subdomain === 'alice' && reusedA.accessKey === 'old-exit-key-0123456789',
+  'enroll ' + String(enrollCountA) + '→' + String(enrollCountA2),
+)
+relayEnrollReply = {
+  ok: true,
+  subdomain: 'Bob',
+  accessKey: 'new-exit-key-0123456789',
+  entry: 'https://bob.b.example.com/?k=new-exit-key-0123456789',
+}
+const enrollCountB = relayCalls.filter((item) => item.pathname === '/relay/enroll').length
+const enrolledB = await host.ensureRelayCredential({ url: 'https://b.example.com', invite: 'INVITE-B', file: crossFile })
+const enrollCountB2 = relayCalls.filter((item) => item.pathname === '/relay/enroll').length
+check(
+  'relay 出口：换成别的出口 → 旧凭据**不认**（重新登记，而不是拿 A 的口令去拨 B）',
+  enrollCountB2 === enrollCountB + 1 && enrolledB.subdomain === 'bob' && enrolledB.exitUrl === 'https://b.example.com',
+  'enroll ' + String(enrollCountB) + '→' + String(enrollCountB2) + ' subdomain=' + String(enrolledB.subdomain),
+)
+relayEnrollReply = {
+  ok: true,
+  subdomain: 'Alice',
+  accessKey: 'relay-key-0123456789',
+  entry: 'https://alice.exit.example.com/?k=relay-key-0123456789',
+}
+
+// 12) 面板：出口地址那一栏 = 默认填好的输入框 + 邀请码框 + 换出口按钮
+check(
+  'relay 面板：出口地址是「默认填好当前出口的输入框」+ 旁边一个邀请码框 + 换出口按钮',
+  relayPanel.includes('value="https://exit.example.com"') &&
+    relayPanel.includes('«relay.exitPlaceholder»') &&
+    relayPanel.includes('«relay.invitePlaceholder»') &&
+    relayPanel.includes('«relay.exitApply»') &&
+    relayPanel.includes('«relay.exitHint»'),
+  '缺=' +
+    [
+      'value="https://exit.example.com"',
+      '«relay.exitPlaceholder»',
+      '«relay.invitePlaceholder»',
+      '«relay.exitApply»',
+      '«relay.exitHint»',
+    ]
+      .filter((needle) => !relayPanel.includes(needle))
+      .join(', '),
+)
+check(
+  'relay 面板：官方出口时输入框里填的就是官方地址（默认填我们那个）',
+  officialRelayPanel.includes('value="https://relay.exit.example.com"'),
+  'value 没填上官方地址',
 )
 
 globalThis.fetch = relayFetchBackup

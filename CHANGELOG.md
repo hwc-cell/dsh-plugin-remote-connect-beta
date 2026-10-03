@@ -2,6 +2,49 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+**The exit is now switchable from the panel, and switching it revealed that the shared exit never
+actually ran in the plugin.**
+
+### Added
+
+- **The panel's *Exit address* field is a real input now**, pre-filled with the exit in use (the
+  official exit by default). Paste someone else's exit address, put that exit's one-time invite code
+  in the box beside it, press 「换到这个出口」 — the tunnel is re-dialled on the new exit immediately,
+  so the link drops for a moment. Empty / `official` / `default` all mean the official exit, and a
+  bare hostname is accepted (`https://` is assumed).
+- **New route `POST /remote-connect/api/relay`** (body `{url, invite?}`, host window only). It is an
+  addition: no other route, parameter or response shape changed. `GET /state` → `public.relay.url`
+  now reports the exit actually in use instead of the configured seed.
+- **The exit lives in a state file** (`$DSH_HOME/remote-connect/relay-exit.json`, 0600, atomic), which
+  also carries an invite that has not been spent yet. `public.relay.url` in the config is only a seed
+  — the same rule as `public.accessKey` — so switching exits never edits the user's
+  `cordis.patch.yml`. The invite is dropped from the file once a registration succeeds.
+- **Relay credentials are stamped with the exit that issued them** (`exitUrl`). Switching exits drops
+  the old exit's password, because that password means nothing on the new exit; switching back picks
+  the stored one up again. Credentials written before this field existed are stamped once at load, so
+  they cannot be carried across a switch by accident.
+- **Exit side: invite codes can expire, and there are two admin routes** for issuing them on behalf of
+  an account. `newInvite({ttlDays})` records an `expiresAt` (default 14 days, hard ceiling 365, `0` =
+  never); `POST /relay/admin/invite` issues a code and `POST /relay/admin/invite/status` answers
+  whether one was used, without ever echoing a code or listing them. Both routes stay **404 unless**
+  `--admin-token-file` (or `DSH_RELAY_ADMIN_TOKEN`) is configured, are rate-limited separately, and
+  compare the token with `secretEquals`. `--new-invite` gained `--ttl <days>`, and a new `--invites`
+  view shows which codes are usable / used / expired. Codes written before `expiresAt` existed are
+  treated as never expiring, so upgrading cannot invalidate a batch in one night.
+
+### Fixed
+
+- **`public.tunnel: relay` was silently downgraded to `ssh`.** The allow-list in `normalizeConfig`
+  never learned about `relay`, so `apply()` saw `tunnel === 'ssh'` and the entire shared-exit path was
+  dead in the plugin — no exit block in the panel, and starting the public entry raised "需要域名" —
+  while `docs/using-a-shared-exit.*` told users to write exactly `tunnel: relay`. Only the CLI worked.
+  A regression assertion now pins `public.tunnel === 'relay'` after normalisation.
+- **Panel: the 「完整链接」 field promised "complete" but truncated.** It was a single-line `<input>`
+  with `text-overflow: ellipsis`, so every long link was cut off — the one thing on the panel a user
+  cannot verify. It renders as a wrapping block now; clicking still selects the whole link.
+
 ## [0.1.0-beta.8] - 2026-10-02
 
 **The official exit is now the default, and it is one flag to change.** Choosing the shared exit used to
