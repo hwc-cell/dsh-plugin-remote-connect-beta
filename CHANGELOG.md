@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.8] - 2026-10-02
+
+**The official exit is now the default, and it is one flag to change.** Choosing the shared exit used to
+mean pasting an exit address too. Now the plugin ships a default exit and you can point it anywhere
+without touching code — the same shape as Tailscale, ngrok or VS Code tunnels, while the self-hosted
+route stays open.
+
+### Added
+
+- **`lib/core/officialExit.js`** — the single place a real exit address appears:
+  `OFFICIAL_EXIT_URL = 'https://relay.dsh.lycheeledger.cn'`, plus `resolveRelayUrl()` (`''` / `official` /
+  `default` → the official exit) and `isOfficialExit()`.
+- **`--relay` with no value now means the official exit.** `--tunnel relay` does too, and
+  `--relay official` / `--relay default` are accepted explicit spellings. Passing an address still
+  selects your own exit; so does `public.relay.url`.
+- **The panel labels the official exit** (`relay.exitOfficial`): the default exit is the author's
+  machine, and a user has the right to know who they are trusting — we do not pick that silently.
+  `test/verify.mjs` asserts the label, so it cannot quietly regress.
+
+### Changed
+
+- `public.relay.url` is no longer required when `public.tunnel: relay`; an empty value resolves to the
+  official exit instead of raising a config problem. Non-relay modes are untouched: an empty url stays
+  empty there, so the self-hosted panel never shows an exit it does not use.
+- **`test/no-private-values.sh` now exempts exactly one host**, `dsh.lycheeledger.cn`, because it is a
+  public product endpoint rather than a private value. The exemption is precise: the host is stripped
+  and the rules are re-run, so other subdomains, server IPs, private keys and local paths still fail
+  the gate.
+- `docs/relay.{md,zh.md}` status brought up to date (M3–M5 landed, M6 added), and the stale
+  `--relay wss://…/relay` example — which was simply the wrong shape — replaced with the real one.
+  `docs/using-a-shared-exit.{md,zh.md}` now say the official exit is the default, and both READMEs no
+  longer claim that no live address appears in the docs (it deliberately does now).
+
 ## [0.1.0-beta.7] - 2026-10-02
 
 ### Added
