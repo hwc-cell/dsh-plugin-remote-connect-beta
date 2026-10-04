@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+**A code can now be retired, which is what makes "replace my code" possible — and the TTL can be
+chosen per code instead of being fixed at 14 days.**
+
+### Added
+
+- **`POST /relay/admin/invite/revoke`** — retires a code that has not been used, so replacing a code
+  can invalidate the old one immediately. Revoking is idempotent, refuses codes that were already
+  used (the name+key is already out; retiring the code cannot take it back — that is `--revoke <name>`),
+  and reports what happened without echoing the code. `enroll` now answers 「这张邀请码已经被作废了」
+  for a retired code, so the holder can tell "I mistyped it" from "it was replaced".
+- **A retired code is recorded as retired** (`revokedAt` on the invite record) rather than deleted or
+  marked used, so `inviteStatus` reports `revoked`, `/relay/health` counts `revokedInvites` separately
+  from `expiredInvites`, and `--invites` prints 已作废. Records written before this field exists are
+  unaffected.
+- **`--revoke-invite <code>`** for the local administrator, and `--new-invite --ttl <days>` is now
+  documented in `--help`-style usage (it already existed).
+
+### Fixed
+
+- **A malformed `ttlDays` silently produced a code that never expires.** `inviteExpiresAt` treated
+  anything it could not parse — `'abc'`, `NaN` — as "no expiry" instead of as a mistake. A typo in a
+  script therefore minted a permanent ticket. Unparseable input now falls back to the default TTL, and
+  the admin route rejects anything outside the 1–365 / `0` whitelist with a 400 before it gets there.
+
 ## [0.1.0-beta.9] - 2026-10-03
 
 **The exit is now switchable from the panel, and switching it revealed that the shared exit never

@@ -85,8 +85,16 @@
 ```bash
 # 出口身份服务（1 核 1G 够用，这是个纯转发 + 签发的小进程）
 node relay/server.mjs --state /var/lib/dsh-relay/state.json --port 8790
-node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite   # 发一个邀请码
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite   # 发一个邀请码（默认 14 天）
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite --ttl 30   # 指定有效期（天；--ttl 0 = 不过期）
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --invites      # 看所有码的状态（可用/已用/已过期/已作废）
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --revoke-invite <码>   # 作废一张还没用掉的码
 node relay/server.mjs --state /var/lib/dsh-relay/state.json --list         # 看登记表（不含口令）
+
+# 服务模式加 --admin-token-file 后开三条管理路由（给「关联了账户」的那一边用；不配令牌 = 三条都不存在）：
+#   POST /relay/admin/invite         发码，body 可带 {"ttlDays": <1..365|0=不过期>}
+#   POST /relay/admin/invite/status  查一个码的状态（用没用掉/过期/作废，不回显码也不列举）
+#   POST /relay/admin/invite/revoke  作废一张没用掉的码 —— 「换一张新的」靠它让旧码立刻失效
 
 # nginx：通配子域 → 本机身份服务 / 隧道端口
 #   证书先给要用的子域逐名签（HTTP-01），不依赖 DNS-01

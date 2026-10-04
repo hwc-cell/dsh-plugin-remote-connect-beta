@@ -823,6 +823,60 @@ check(
   JSON.stringify({ before: statusBefore.payload.used, after: statusAfter.payload.used, by: statusAfter.payload.usedBy }),
 )
 
+// 「换一张新的」= 作废旧码（2026-10-04 新增）。要钉住三件事：
+// 作废真的让它登记不了、状态看得出来、已经用掉的码不给作废。
+const revokeTarget = await adminPost('/admin/invite', { ttlDays: 7 }, ADMIN_TOKEN)
+const revokeFirst = await adminPost('/admin/invite/revoke', { code: revokeTarget.payload.code }, ADMIN_TOKEN)
+const revokeAgain = await adminPost('/admin/invite/revoke', { code: revokeTarget.payload.code }, ADMIN_TOKEN)
+const statusRevoked = await adminPost('/admin/invite/status', { code: revokeTarget.payload.code }, ADMIN_TOKEN)
+const enrollRevoked = await fetch(adminBase + '/enroll', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ invite: revokeTarget.payload.code, name: 'revokedguy' }),
+}).then(async (r) => ({ status: r.status, payload: await r.json() }))
+check(
+  '管理接口：作废一张码 → ok；重复作废幂等（alreadyRevoked=true，重试不会把调用方搞糊涂）',
+  revokeFirst.status === 200 &&
+    revokeFirst.payload.ok === true &&
+    revokeFirst.payload.alreadyRevoked === false &&
+    revokeAgain.status === 200 &&
+    revokeAgain.payload.alreadyRevoked === true,
+  JSON.stringify({ first: revokeFirst.payload, again: revokeAgain.payload }),
+)
+check(
+  '作废的码登记不了，且原因是"被作废"而不是"无效"（拿码的人分得清抄错还是被换掉）',
+  enrollRevoked.status === 400 && /作废/.test(String(enrollRevoked.payload.error)),
+  'HTTP ' + String(enrollRevoked.status) + ' ' + String(enrollRevoked.payload.error),
+)
+check(
+  '查状态看得出"已作废"（revoked=true，且不算 used）',
+  statusRevoked.payload.revoked === true && statusRevoked.payload.used === false,
+  JSON.stringify(statusRevoked.payload),
+)
+const revokeUsed = await adminPost('/admin/invite/revoke', { code: adminIssued.payload.code }, ADMIN_TOKEN)
+const revokeMissing = await adminPost('/admin/invite/revoke', { code: 'NOSUCHCODE' }, ADMIN_TOKEN)
+check(
+  '已经用掉的码不给作废（凭据已经发出去了，作废那张码收不回来 → 400）；不存在的码同样 400',
+  revokeUsed.status === 400 && revokeUsed.payload.ok === false && revokeMissing.status === 400,
+  JSON.stringify({ used: revokeUsed.payload, missing: revokeMissing.payload }),
+)
+const healthWithRevoked = await fetch(adminBase + '/health').then(async (r) => await r.json())
+check(
+  '统计：作废的码单独计数（revokedInvites≥1），不混进"过期"（换掉的 ≠ 自己烂掉的）',
+  Number(healthWithRevoked.revokedInvites) >= 1,
+  JSON.stringify(healthWithRevoked),
+)
+
+// 有效期传垃圾值**不能**变成"永不过期"——一个笔误就发出一张永久入场券
+const badTtlBig = await adminPost('/admin/invite', { ttlDays: 400 }, ADMIN_TOKEN)
+const badTtlText = await adminPost('/admin/invite', { ttlDays: 'abc' }, ADMIN_TOKEN)
+const nanTtlDays = (Date.parse(inviteExpiresAt('abc')) - Date.now()) / 86400000
+check(
+  '有效期白名单：400 天 / 非数字 → 400（不给发）；且 inviteExpiresAt(垃圾值) 退回默认 14 天而不是"不过期"',
+  badTtlBig.status === 400 && badTtlText.status === 400 && nanTtlDays > 13.9 && nanTtlDays < 14.1,
+  JSON.stringify({ big: badTtlBig.status, text: badTtlText.status, nanTtlDays }),
+)
+
 // 有效期：过期的码不能再用（拿一份"过期码"的状态文件喂给 store，确定性最高，不靠等）
 const expiredFile = path.join(dir, 'expired-state.json')
 fs.writeFileSync(

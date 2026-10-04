@@ -16,14 +16,16 @@
  *
  * 用法：
  *   node relay/server.mjs --state /var/lib/dsh-relay/state.json --port 8790 --base-domain dsh.example.com
- *   node relay/server.mjs --state <file> --new-invite [--ttl <天>]   # 发一个邀请码（默认 14 天有效期）
- *   node relay/server.mjs --state <file> --invites                   # 看所有邀请码的状态（本机管理员）
- *   node relay/server.mjs --state <file> --list                      # 看登记表（不含口令）
- *   node relay/server.mjs --state <file> --revoke alice              # 吊销一个名字
+ *   node relay/server.mjs --state <file> --new-invite [--ttl <天>]    # 发一个邀请码（默认 14 天；--ttl 0 = 不过期）
+ *   node relay/server.mjs --state <file> --invites                    # 看所有邀请码的状态（本机管理员）
+ *   node relay/server.mjs --state <file> --revoke-invite <码>          # 作废一张还没用掉的码（「换一张新的」）
+ *   node relay/server.mjs --state <file> --list                       # 看登记表（不含口令）
+ *   node relay/server.mjs --state <file> --revoke alice               # 吊销一个名字
  *
- * 服务模式加 --admin-token-file <文件>（或环境变量 DSH_RELAY_ADMIN_TOKEN）才会开
- * `POST /relay/admin/invite`（发码）与 `POST /relay/admin/invite/status`（查状态）——
- * 给"关联了账户"的那一边（荔枝记账）用。**不配令牌 = 这两个接口不存在**。
+ * 服务模式加 --admin-token-file <文件>（或环境变量 DSH_RELAY_ADMIN_TOKEN）才会开这三条：
+ * `POST /relay/admin/invite`（发码）、`POST /relay/admin/invite/status`（查状态）、
+ * `POST /relay/admin/invite/revoke`（作废一张码 —— 换新时旧码立刻失效）——
+ * 给"关联了账户"的那一边（荔枝记账）用。**不配令牌 = 这三个接口不存在**。
  */
 import http from 'node:http'
 import fs from 'node:fs'
@@ -84,7 +86,10 @@ export const MAX_INVITE_TTL_DAYS = 365
 export function inviteExpiresAt(ttlDays) {
   if (ttlDays === null || ttlDays === undefined || ttlDays === 0 || ttlDays === 'never') return null
   const days = Number(ttlDays)
-  if (!Number.isFinite(days) || days <= 0) return null
+  // ⚠️ 解析不出来（NaN）**不是**"不过期"，那是没填对 —— 退回默认 14 天。
+  // 原来这里直接 return null（= 永久），一个笔误就能发出一张永不过期的入场券。
+  if (!Number.isFinite(days)) return inviteExpiresAt(DEFAULT_INVITE_TTL_DAYS)
+  if (days <= 0) return null
   const capped = Math.min(days, MAX_INVITE_TTL_DAYS)
   return new Date(Date.now() + Math.round(capped * 24 * 3600 * 1000)).toISOString()
 }
@@ -95,6 +100,17 @@ export function inviteExpired(record, now = Date.now()) {
   if (typeof expiresAt !== 'string' || expiresAt === '') return false
   const at = Date.parse(expiresAt)
   return Number.isFinite(at) && at <= now
+}
+
+/**
+ * 这张邀请码被**作废**了吗（「换一张新的」就是走这条路：旧码立刻失效）。
+ *
+ * 为什么不直接删记录：删了之后 `enroll` 只能回「邀请码无效」，拿码的人分不清是"抄错了"
+ * 还是"被换掉了"；留着 `revokedAt` 才能给出准确原因，统计也能把它和"过期"分开算。
+ */
+export function inviteRevoked(record) {
+  const revokedAt = record === null || record === undefined ? null : record.revokedAt
+  return typeof revokedAt === 'string' && revokedAt !== ''
 }
 
 function generateInvite() {
@@ -224,6 +240,7 @@ export function createIdentityStore(options = {}) {
         usedAt: null,
         usedBy: null,
         expiresAt: inviteExpiresAt(ttlDays),
+        revokedAt: null,
       }
       saveState(file, state)
       return code
@@ -241,15 +258,43 @@ export function createIdentityStore(options = {}) {
       reloadFromDisk()
       const key = asString(code).trim().toUpperCase()
       const record = key === '' ? undefined : state.invites[key]
-      if (record === undefined) return { ok: true, exists: false, used: false, expired: false, usedBy: null, expiresAt: null }
+      if (record === undefined) {
+        return { ok: true, exists: false, used: false, expired: false, revoked: false, usedBy: null, expiresAt: null }
+      }
       return {
         ok: true,
         exists: true,
         used: record.usedAt !== null && record.usedAt !== undefined,
         expired: inviteExpired(record),
+        revoked: inviteRevoked(record),
         usedBy: asString(record.usedBy) || null,
         expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : null,
       }
+    },
+
+    /**
+     * 管理员侧：作废一张邀请码（「换一张新的」用）。
+     *
+     * 幂等：已经作废过的再作废一次也回 ok（避免重试时把调用方搞糊涂）。
+     * **已经用掉的码不给作废** —— 用掉就意味着一份「名字 + 口令」已经发出去了，
+     * 作废那张码并不能收回凭据（要收凭据是 `--revoke <名字>` 那件事），两边别混。
+     */
+    revokeInvite(code) {
+      reloadFromDisk()
+      const key = asString(code).trim().toUpperCase()
+      const record = key === '' ? undefined : state.invites[key]
+      if (record === undefined) return { ok: false, error: '没有这张邀请码' }
+      if (record.usedAt !== null && record.usedAt !== undefined) {
+        return { ok: false, error: '这张邀请码已经被用过了，作废没有意义' }
+      }
+      if (inviteRevoked(record)) {
+        return { ok: true, code: key, revokedAt: record.revokedAt, alreadyRevoked: true }
+      }
+      record.revokedAt = new Date().toISOString()
+      saveState(file, state)
+      // 同样只记"作废了一张"，不记码本身
+      log('admin: invite revoked')
+      return { ok: true, code: key, revokedAt: record.revokedAt, alreadyRevoked: false }
     },
 
     /** 管理员侧：吊销（名字连同它的口令一起作废；指纹进退休区，永不再发）。 */
@@ -285,6 +330,7 @@ export function createIdentityStore(options = {}) {
       const record = state.invites[code]
       if (record === undefined) return { ok: false, error: '邀请码无效' }
       if (record.usedAt !== null) return { ok: false, error: '邀请码已经用过了（一个码只能给一个人）' }
+      if (inviteRevoked(record)) return { ok: false, error: '这张邀请码已经被作废了（旧码换新后就失效）' }
       if (inviteExpired(record)) return { ok: false, error: '邀请码已过期（过了有效期，重新领一张）' }
       const subdomain = pickSubdomain(requestedName)
       const accessKey = issueKey(subdomain)
@@ -346,6 +392,7 @@ export function createIdentityStore(options = {}) {
         createdAt: typeof record?.createdAt === 'string' ? record.createdAt : null,
         expiresAt: typeof record?.expiresAt === 'string' ? record.expiresAt : null,
         expired: inviteExpired(record),
+        revoked: inviteRevoked(record),
         usedBy: asString(record?.usedBy) || null,
       }))
     },
@@ -356,13 +403,17 @@ export function createIdentityStore(options = {}) {
       reloadFromDisk()
       const invites = Object.values(state.invites)
       const unused = invites.filter((item) => item.usedAt === null)
+      const revoked = invites.filter((item) => inviteRevoked(item))
       return {
         users: Object.keys(state.users).length,
         invites: invites.length,
         unusedInvites: unused.length,
-        // 「还能用」= 没被用过、也没过期。看这个数才有意义（老字段保留给既有断言/文档）。
-        usableInvites: unused.filter((item) => inviteExpired(item) === false).length,
-        expiredInvites: unused.filter((item) => inviteExpired(item) === true).length,
+        // 「还能用」= 没被用过、没被作废、也没过期。看这个数才有意义
+        // （老字段保留给既有断言/文档）。被作废的那些单独算，别混进"过期"里 ——
+        // 「换新换掉的」和「自己烂掉的」是两回事，排查时要分得开。
+        usableInvites: unused.filter((item) => inviteExpired(item) === false && inviteRevoked(item) === false).length,
+        expiredInvites: unused.filter((item) => inviteExpired(item) === true && inviteRevoked(item) === false).length,
+        revokedInvites: revoked.length,
       }
     },
   }
@@ -748,8 +799,8 @@ export function createRelayServer(options) {
         sendJson(res, 200, { ok: true, ...store.stats() })
         return
       }
-      if (route === '/relay/admin/invite' || route === '/relay/admin/invite/status') {
-        // 管理侧（给「关联了账户」的那一边用）：发码 / 查一个码的状态。
+      if (route === '/relay/admin/invite' || route === '/relay/admin/invite/status' || route === '/relay/admin/invite/revoke') {
+        // 管理侧（给「关联了账户」的那一边用）：发码 / 查一个码的状态 / 作废一张码。
         // 三条防线：没配令牌 = 404（默认关闭）、按 IP 限流、令牌等值比较走 timingSafeEqual。
         if (req.method !== 'POST') {
           sendJson(res, 405, { ok: false, error: '请用 POST' })
@@ -780,7 +831,26 @@ export function createRelayServer(options) {
           sendJson(res, 200, store.inviteStatus(adminBody.code))
           return
         }
-        const ttlDays = adminBody.ttlDays === undefined ? DEFAULT_INVITE_TTL_DAYS : adminBody.ttlDays
+        if (route === '/relay/admin/invite/revoke') {
+          const result = store.revokeInvite(adminBody.code)
+          if (result.ok !== true) {
+            sendJson(res, 400, result)
+            return
+          }
+          sendJson(res, 200, result)
+          return
+        }
+        // 有效期白名单：不传 = 默认；0 / 'never' = 不过期；其余必须是 1..365 的有限数。
+        // 不在这里挡的话，一个拼错的值会悄悄变成"永不过期"（见 inviteExpiresAt 的注释）。
+        const rawTtl = adminBody.ttlDays
+        if (rawTtl !== undefined && rawTtl !== 0 && rawTtl !== 'never') {
+          const asNumber = Number(rawTtl)
+          if (!Number.isFinite(asNumber) || asNumber < 1 || asNumber > MAX_INVITE_TTL_DAYS) {
+            sendJson(res, 400, { ok: false, error: '有效期不合法（1–365 天，0 或 never = 不过期）' })
+            return
+          }
+        }
+        const ttlDays = rawTtl === undefined ? DEFAULT_INVITE_TTL_DAYS : rawTtl
         const code = store.newInvite({ ttlDays })
         const info = store.inviteStatus(code)
         // 只记「发了码」这件事，绝不记码本身（日志里出现码等于泄漏一张入场券）
@@ -923,11 +993,22 @@ if (isMain) {
     // 看还剩哪些码、什么时候到期、被谁用掉了（只在服务器本机跑，属管理员视角）
     let usable = 0
     for (const [code, record] of Object.entries(store.invites())) {
-      const state = record.usedBy !== null ? '已用(' + record.usedBy + ')' : record.expired === true ? '已过期' : '可用'
+      const state = record.usedBy !== null
+        ? '已用(' + record.usedBy + ')'
+        : record.revoked === true
+          ? '已作废'
+          : record.expired === true
+            ? '已过期'
+            : '可用'
       if (state === '可用') usable += 1
       process.stdout.write([code, state, record.expiresAt === null ? '不过期' : record.expiresAt].join('\t') + '\n')
     }
     process.stdout.write('可用的码：' + String(usable) + ' 张\n')
+  } else if (typeof flags['revoke-invite'] === 'string') {
+    // 作废一张还没用掉的码（「换一张新的」在出口侧那一半）
+    const result = store.revokeInvite(flags['revoke-invite'])
+    process.stdout.write(JSON.stringify(result) + '\n')
+    process.exitCode = result.ok === true ? 0 : 1
   } else if (flags.list === true) {
     for (const user of store.list()) {
       process.stdout.write(

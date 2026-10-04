@@ -95,8 +95,17 @@ use, with an expiry, revocable.
 ```bash
 # identity service (1 core / 1 GB is plenty: it signs, then mostly forwards)
 node relay/server.mjs --state /var/lib/dsh-relay/state.json --port 8790
-node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite   # mint an invite
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite   # mint an invite (14 days by default)
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --new-invite --ttl 30   # pick the TTL in days (--ttl 0 = never expires)
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --invites      # every code's state (usable/used/expired/revoked)
+node relay/server.mjs --state /var/lib/dsh-relay/state.json --revoke-invite <code>   # retire a code that has not been used
 node relay/server.mjs --state /var/lib/dsh-relay/state.json --list         # registry (never keys)
+
+# In server mode, --admin-token-file opens three admin routes (for the account-linked side;
+# without a token none of them exist):
+#   POST /relay/admin/invite         issue a code, body may carry {"ttlDays": <1..365|0 = never>}
+#   POST /relay/admin/invite/status  one code's state (used/expired/revoked; never echoes or lists codes)
+#   POST /relay/admin/invite/revoke  retire an unused code — this is what makes replacing a code work
 
 # nginx: wildcard subdomain → local identity service / tunnel port
 #   certificates: issue per-name over HTTP-01 first; DNS-01 only if you want the wildcard
