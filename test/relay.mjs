@@ -134,11 +134,25 @@ check('轮换：旧口令进退休区（指纹留着），新口令也不会落�
 const rotateAfterRotate = await post('/rotate', { subdomain: 'alice', accessKey: issued[0] })
 check('轮换：被换掉的口令不能再用来轮换（它已经作废）', rotateAfterRotate.status === 400, rotateAfterRotate.payload.error)
 
+// ── 轮换不许把"别处改过的状态"整份写回去 ──
+// 服务是常驻进程，运维用 CLI 改的是**磁盘**。rotate 末尾是 saveState(全量内存)：
+// 少了开头的 reloadFromDisk 就会把内存里的旧状态整份覆盖回去 —— 被吊销的名字原地复活。
+const ghostEnroll = await post('/enroll', { invite: store.newInvite(), name: 'ghost' })
+const ghostKey = ghostEnroll.payload.accessKey
+const otherStore = createIdentityStore({ file: stateFile, log: () => {} })
+otherStore.revoke('ghost') // 模拟运维在另一个进程（CLI）里把 ghost 吊销掉
+const ghostRotate = await post('/rotate', { subdomain: 'ghost', accessKey: ghostKey })
+check(
+  '轮换：不把内存旧状态写回（别处已吊销的名字不能被 rotate 复活）',
+  ghostRotate.status === 400 && JSON.parse(fs.readFileSync(stateFile, 'utf8')).users.ghost === undefined,
+  'HTTP ' + String(ghostRotate.status) + ' ' + String(ghostRotate.payload.error),
+)
+
 // ── 吊销 / 健康检查 ──
 const health = await fetch(base + '/health').then(async (r) => ({ status: r.status, payload: await r.json() }))
 check(
-  'health：只报计数，不回显任何名字或口令',
-  health.status === 200 && health.payload.ok === true && typeof health.payload.users === 'number' && !JSON.stringify(health.payload).includes('alice'),
+  'health：公开访问只回 ok（运营数字不白送），且不回显任何名字或口令',
+  health.status === 200 && health.payload.ok === true && health.payload.users === undefined && !JSON.stringify(health.payload).includes('alice'),
   JSON.stringify(health.payload),
 )
 check('未知路由：404，不会误当成签发', (await post('/whatever', {})).status === 404)
@@ -331,6 +345,22 @@ const upstream = http.createServer((req, res) => {
       res.write('second-part\n')
       res.end()
     }, 200)
+    return
+  }
+  if (route === '/drip') {
+    // 每隔 120ms 吐一块、共 4 块（总时长 ≈ 360ms）。用来验"空闲超时"而不是"总时长超时"：
+    // 间隔 120ms < idleMs，但总时长 > idleMs —— 固定总时长的实现会在这里被切断。
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+    res.flushHeaders()
+    let n = 0
+    const timer = setInterval(() => {
+      n += 1
+      res.write('part' + String(n) + '\n')
+      if (n >= 4) {
+        clearInterval(timer)
+        res.end()
+      }
+    }, 120)
     return
   }
   if (route === '/echo' && req.method === 'POST') {
@@ -693,6 +723,93 @@ await nosweepPlugin.stop()
 relayNoSweep.close()
 serverNoSweep.close()
 
+// ── 上游超时：必须是「空闲超时」，不是「总时长」 ──
+// 固定总时长会把"一直在流、但总时长超过阈值"的响应（LLM 流式 / SSE）在中途硬切断，
+// 与"必须保持流式、不整体缓冲"的设计目标正面冲突。这里用一个 300ms 的空闲阈值来放大观察：
+//   /drip = 每 120ms 吐一块、共 4 块（总时长 ≈ 360ms > 阈值，但最大间隔 120ms < 阈值）→ 必须完整收完；
+//   /hang = 一直不回 → 超过 300ms 必须 504。
+const idleMs = 300
+const relayIdle = createRelayServer({ store, baseDomain: 'dsh.example.com', idleTimeoutMs: idleMs, sweepMs: 0, maxPending: 4 })
+const serverIdle = http.createServer(relayIdle)
+await new Promise((resolve) => serverIdle.listen(0, '127.0.0.1', resolve))
+const idlePort = serverIdle.address().port
+const idleUser = store.enroll(store.newInvite(), 'idler')
+const idlePlugin = createRelayTunnel({
+  url: 'http://127.0.0.1:' + String(idlePort),
+  subdomain: 'idler',
+  accessKey: idleUser.accessKey,
+  localPort: upstreamPort,
+  log: () => {},
+})
+await idlePlugin.start()
+await waitFor(async () => (await rawRequest({ path: '/hello', host: 'idler.dsh.example.com', port: idlePort })).status === 200, 4000)
+
+const slowStart = Date.now()
+const slowStream = await rawRequest({ path: '/drip', host: 'idler.dsh.example.com', port: idlePort })
+const slowElapsed = Date.now() - slowStart
+check(
+  '上游超时：总时长超过阈值、但一直在流 → 不被切断（4 块都收到）',
+  slowStream.status === 200 && ['part1', 'part2', 'part3', 'part4'].every((p) => slowStream.body.includes(p)) && slowElapsed > idleMs,
+  'HTTP ' + String(slowStream.status) + ' 用时 ' + String(slowElapsed) + 'ms body=' + JSON.stringify(slowStream.body),
+)
+
+const hangStart = Date.now()
+const hungResponse = await rawRequest({ path: '/hang', host: 'idler.dsh.example.com', port: idlePort })
+const hangElapsed = Date.now() - hangStart
+check(
+  '上游超时：上游一直不回 → 空闲超时后 504（真挂死还是会被收掉）',
+  hungResponse.status === 504 && hangElapsed >= idleMs - 60,
+  'HTTP ' + String(hungResponse.status) + ' 用时 ' + String(hangElapsed) + 'ms',
+)
+await idlePlugin.stop()
+serverIdle.close()
+
+// ── 重连退避：稳定跑过 stableMs 之后必须清零 ──
+// 少了这一步，一次网络抖动会把 attempts 永久顶到上限，之后每次断线都按最大延迟重连
+// （几秒的抖动换来几十秒的等待）。这里用一个"接上就断"的假出口反复触发重连，
+// 对比 stableMs=0 与 stableMs 很大两种情形下的延迟序列。
+async function backoffProbe(stableMs) {
+  const delays = []
+  const flaky = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.flushHeaders()
+    setTimeout(() => {
+      if (res.socket) res.socket.destroy()
+    }, 10)
+  })
+  await new Promise((resolve) => flaky.listen(0, '127.0.0.1', resolve))
+  const probe = createRelayTunnel({
+    url: 'http://127.0.0.1:' + String(flaky.address().port),
+    subdomain: 'zonk',
+    accessKey: 'probe-key-0123456789',
+    localPort: 1,
+    backoffBaseMs: 1500, // ⚠️ nextBackoffDelay 里有 Math.max(1000, …) 的地板，基准得高过它才观察得到倍率
+    backoffMaxMs: 60000,
+    backoffJitter: 0,
+    stableMs,
+    log: () => {},
+    onState: (next) => {
+      if (next.phase === 'reconnecting') delays.push(Number(next.params?.delayMs ?? 0))
+    },
+  })
+  await probe.start()
+  await waitFor(() => delays.length >= 2, 9000)
+  await probe.stop()
+  flaky.close()
+  return delays
+}
+const backoffStable = await backoffProbe(0) // 连上即算稳定 → 每次都是第一档
+const backoffGrowing = await backoffProbe(60000) // 一直没到稳定 → 延迟逐次翻倍
+check(
+  '重连退避：稳定跑过 stableMs 后清零（否则一次抖动就永远按最大延迟重连）',
+  backoffStable.length >= 2 &&
+    backoffStable.every((d) => d === 1500) &&
+    backoffGrowing.length >= 2 &&
+    backoffGrowing[0] === 1500 &&
+    backoffGrowing[1] === 3000,
+  'stable=' + JSON.stringify(backoffStable) + ' growing=' + JSON.stringify(backoffGrowing),
+)
+
 upstream.close()
 relay.close()
 server.close()
@@ -860,7 +977,15 @@ check(
   revokeUsed.status === 400 && revokeUsed.payload.ok === false && revokeMissing.status === 400,
   JSON.stringify({ used: revokeUsed.payload, missing: revokeMissing.payload }),
 )
-const healthWithRevoked = await fetch(adminBase + '/health').then(async (r) => await r.json())
+const healthWithRevoked = await fetch(adminBase + '/health', { headers: { authorization: 'Bearer ' + ADMIN_TOKEN } }).then(async (r) => await r.json())
+// 带上管理令牌才给运营数字；不带就只回 ok（公开端点不能白送统计）
+const healthPublic = await fetch(adminBase + '/health').then(async (r) => await r.json())
+const healthWithToken = await fetch(adminBase + '/health', { headers: { authorization: 'Bearer ' + ADMIN_TOKEN } }).then(async (r) => await r.json())
+check(
+  'health：不带令牌只回 ok，带管理令牌才回计数（公开端点不泄漏运营数字）',
+  healthPublic.ok === true && healthPublic.users === undefined && typeof healthWithToken.users === 'number',
+  'public=' + JSON.stringify(healthPublic) + ' token=' + JSON.stringify(healthWithToken),
+)
 check(
   '统计：作废的码单独计数（revokedInvites≥1），不混进"过期"（换掉的 ≠ 自己烂掉的）',
   Number(healthWithRevoked.revokedInvites) >= 1,

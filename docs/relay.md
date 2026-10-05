@@ -165,7 +165,9 @@ someone else's:
 - The **invite code** box next to it is for switching: paste the one-time invite that exit gave you.
   Without it you cannot be registered there, and the tunnel will not come up. Once an exit has
   registered you, you never need it again. The old exit's access password does not work on the new
-  one — the panel registers you there again, and switching back picks up the stored credential.
+  one — the panel registers you there again. Switching back reuses the stored credential **only if you
+  have not registered on another exit since**: there is a single credential slot, and a successful
+  registration elsewhere overwrites it (returning then needs a fresh invite code).
 - Switching writes a **state file** (`$DSH_HOME/remote-connect/relay-exit.json`, 0600) — it never
   touches your `cordis.patch.yml`. The `url` in the config is only a seed; the runtime truth lives in
   the state file (the same rule as the access password).

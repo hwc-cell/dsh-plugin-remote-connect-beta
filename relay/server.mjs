@@ -353,6 +353,10 @@ export function createIdentityStore(options = {}) {
      * 登记表里只有指纹，所以这里比对指纹就够了，不需要存明文。
      */
     rotate(subdomain, currentKey) {
+      // 🔴 必须先读盘：本进程是常驻的，运维用 CLI 改的是**磁盘**上的状态；
+      // rotate 末尾是 saveState(全量内存)，少了这一行就会把内存里的旧状态整份写回去 ——
+      // 被吊销的人原地复活、刚发的邀请码被回滚。其余写路径都有这一行，只有这里漏了。
+      reloadFromDisk()
       const name = asString(subdomain).trim().toLowerCase()
       const user = state.users[name]
       if (user === undefined) return { ok: false, error: '没有这个名字' }
@@ -536,6 +540,14 @@ export function createRelayServer(options) {
   const maxFrameBytes = Number.isInteger(options.maxFrameBytes) && options.maxFrameBytes > 0 ? options.maxFrameBytes : 4 * 1024 * 1024
   // 单条隧道同时在飞（还没回完）的公网请求上限，防止一个访客把 pending 表撑爆。
   const maxPending = Number.isInteger(options.maxPending) && options.maxPending > 0 ? options.maxPending : 256
+  // 隧道连上后、插件发 ready 之前，帧会先攒在队列里。攒队列**必须有上限**：
+  // 否则一个"连上但一直不发 ready"的客户端，能被公网请求把帧无限堆进内存 → OOM，
+  // 而这是单进程共享出口，全体用户会一起掉线。超限就切断该隧道（重连即可恢复）。
+  const maxQueueFrames = Number.isInteger(options.maxQueueFrames) && options.maxQueueFrames > 0 ? options.maxQueueFrames : 1024
+  // 公网请求的**空闲**超时：从"最后一次收到上游动静"算起，而不是从请求建立算起。
+  // 原来是一个固定的总时长 120s —— 那会把"一直在流、但总时长超过 2 分钟"的响应
+  // （LLM 流式输出 / SSE）在第 120 秒硬切断，正好违背"必须保持流式、不整体缓冲"的设计目标。
+  const idleTimeoutMs = Number.isInteger(options.idleTimeoutMs) && options.idleTimeoutMs > 0 ? options.idleTimeoutMs : 120000
   const allow = createLimiter()
   // 管理接口单独限流：一个令牌就能无限发码，比 enroll 敏感得多
   const allowAdmin = createLimiter({ windowMs: 60_000, max: 20 })
@@ -576,6 +588,11 @@ export function createRelayServer(options) {
   function writeFrame(tunnel, frame) {
     if (tunnel.dead) return
     if (tunnel.online === false) {
+      if (tunnel.queue.length >= maxQueueFrames) {
+        log('tunnel: 待发队列超限（' + String(tunnel.queue.length) + ' 帧），切断并等重连')
+        closeTunnel(tunnel, 'queue-overflow')
+        return
+      }
       tunnel.queue.push(frame)
       return
     }
@@ -593,6 +610,22 @@ export function createRelayServer(options) {
     if (pending.timer !== null) clearTimeout(pending.timer)
     tunnel.pending.delete(id)
     return pending
+  }
+
+  /**
+   * 重新起算"空闲超时"：每次上游有动静（头发出来、又来一块 body）都重置。
+   * 只守"多久没动静"，不守"总共花了多久" —— 长连接流式响应因此不会被误杀。
+   */
+  function armIdleTimer(tunnel, id, pending) {
+    if (pending.timer !== null) clearTimeout(pending.timer)
+    pending.timer = setTimeout(() => {
+      const gone = finishPending(tunnel, id)
+      if (gone === undefined) return
+      // 头都没发出去才能换成 504；已经发过头的只能断流（HTTP 没法中途改状态码）
+      if (gone.res.headersSent === false) sendJson(gone.res, 504, { ok: false, error: '隧道上游超时' })
+      else gone.res.end()
+    }, idleTimeoutMs)
+    if (typeof pending.timer.unref === 'function') pending.timer.unref()
   }
 
   /** 隧道断开：撤销登记；还没回完的公网请求一律 502，别让它们挂着。 */
@@ -646,6 +679,7 @@ export function createRelayServer(options) {
         return
       }
       pending.started = true
+      armIdleTimer(tunnel, id, pending) // 头已到 → 空闲计时重新起算
       return
     }
     if (type === 'response-chunk') {
@@ -657,6 +691,7 @@ export function createRelayServer(options) {
       } catch (error) {
         log('tunnel: 写响应体失败 ' + String(error?.message ?? error))
       }
+      armIdleTimer(tunnel, id, pending) // 每来一块都算"还活着"，长流不会被总时长切断
       return
     }
     if (type === 'response-end') {
@@ -745,14 +780,8 @@ export function createRelayServer(options) {
     const id = (nextRequestId += 1)
     const pending = { id, res, started: false, timer: null }
     tunnel.pending.set(id, pending)
-    // 兜底：隧道活着但插件迟迟不回，别让公网连接永远挂着
-    pending.timer = setTimeout(() => {
-      const gone = finishPending(tunnel, id)
-      if (gone === undefined) return
-      if (res.headersSent === false) sendJson(res, 504, { ok: false, error: '隧道上游超时' })
-      else res.end()
-    }, 120000)
-    if (typeof pending.timer.unref === 'function') pending.timer.unref()
+    // 兜底：隧道活着但插件迟迟不回，别让公网连接永远挂着（空闲超时，有动静就重置）
+    armIdleTimer(tunnel, id, pending)
 
     writeFrame(tunnel, {
       type: 'request',
@@ -796,7 +825,14 @@ export function createRelayServer(options) {
     const route = url.pathname
     try {
       if (route === '/relay/health') {
-        sendJson(res, 200, { ok: true, ...store.stats() })
+        // ⚠️ 这是**公开**端点（任何子域的 Host 都能打到，匿名可访问）。
+        // 运营数字（几个用户、几张码还没发出去）不该白送出去，所以默认只回 ok；
+        // 带上有效管理令牌才回全量 —— 面板/巡检/监控要么在别处，要么本来就有令牌。
+        if (adminToken !== '' && secretEquals(bearerToken(req), adminToken)) {
+          sendJson(res, 200, { ok: true, ...store.stats() })
+          return
+        }
+        sendJson(res, 200, { ok: true })
         return
       }
       if (route === '/relay/admin/invite' || route === '/relay/admin/invite/status' || route === '/relay/admin/invite/revoke') {
@@ -879,7 +915,9 @@ export function createRelayServer(options) {
         }
         sendJson(res, 200, {
           ...result,
-          entry: entryFor(result.subdomain) + (route === '/relay/enroll' ? '?k=' + result.accessKey : ''),
+          // 两种路由都要带 ?k=：rotate 换完口令后返回的 entry 若不带新口令，
+          // 客户端沿用它会直接 401（enroll 一直是带的，rotate 漏了）。
+          entry: entryFor(result.subdomain) + '?k=' + result.accessKey,
         })
         return
       }

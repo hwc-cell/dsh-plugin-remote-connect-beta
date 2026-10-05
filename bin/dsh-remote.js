@@ -213,6 +213,8 @@ async function commandServe(flags) {
     tenants: tenantRouter,
     allowedHosts: domains,
     mobileAdaptation: flags['no-mobile'] !== true,
+    // 来源标记：经这个入口进来的请求都不是"宿主窗口直连" → 面板只读。
+    originLabel: isPublic ? 'public' : 'lan',
     log: (line) => process.stderr.write('· ' + line + '\n'),
   })
   const info = await proxy.start()

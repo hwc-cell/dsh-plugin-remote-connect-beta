@@ -1213,7 +1213,7 @@ const { createProxy } = proxyTools
 async function startStubUpstream(name) {
   const seen = []
   const stub = http.createServer((req, res) => {
-    seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, name })
+    seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, name, marker: req.headers['x-remote-connect-origin'] })
     res.writeHead(200, { 'content-type': 'text/html' })
     res.end('<!doctype html><title>' + name + '</title><body>' + name + '</body>')
   })
@@ -1332,6 +1332,41 @@ await routedProxy.stop()
 upstreamA.stub.close()
 upstreamB.stub.close()
 fs.rmSync(tenantDir, { recursive: true, force: true })
+
+// ── 来源标记：代理必须**真的**写 `x-remote-connect-origin`（宿主窗口专属控制的总开关）──
+// 这条以前只有注释没有实现：代理不写头 ⇒ 插件 API 的 requireLocalControl 只查这个头，
+// 于是对谁都放行 —— 局域网访客 / 拿到 ?k= 链接的人可以 POST 控制接口（换口令、改出口、停隧道）。
+// ⚠️ 老测试是**手工把个这头塞进请求**来模拟代理，所以永远抓不到"代理其实没写"。
+// 这里改成一个真代理 → 真上游，并把客户端伪造的值一起验掉。
+const markerUpstream = await startStubUpstream('marker-probe')
+const markerProxy = createProxy({
+  port: 0,
+  listenHost: '127.0.0.1',
+  upstreamPort: markerUpstream.stubPort,
+  originLabel: 'public',
+  logPaths: [],
+})
+const markerInfo = await markerProxy.start()
+await rawRequest('http://127.0.0.1:' + String(markerInfo.port) + '/', {
+  headers: { 'x-remote-connect-origin': 'spoofed-by-client' },
+})
+await rawRequest('http://127.0.0.1:' + String(markerInfo.port) + '/')
+const markers = markerUpstream.seen.map((item) => item.marker)
+check(
+  '来源标记：代理无条件覆写 x-remote-connect-origin（客户端自带的值被删掉）',
+  markers.length === 2 && markers.every((m) => m === 'public'),
+  '上游收到的标记 = ' + JSON.stringify(markers),
+)
+await markerProxy.stop()
+markerUpstream.stub.close()
+
+// 光有代理机制不够 —— 两个入口必须**真的**把 originLabel 传下去，否则代理不标、门又是开的。
+// （这是"接线漏了"型缺陷：机制测试全绿，用户走的那条路却还是敞开。）
+const indexSourceForMarker = fs.readFileSync(path.join(root, 'lib', 'index.js'), 'utf8')
+check(
+  '来源标记：局域网入口与公网入口都传了 originLabel（不然等于没修）',
+  indexSourceForMarker.includes("originLabel: 'lan'") && indexSourceForMarker.includes("originLabel: 'public'"),
+)
 
 // ──────────────────── 首页令牌注入：三个方向相反的坑（回归） ────────────────────
 // 坑 1（死循环 · 用户实测）：Harness 对 `/?token=…` 一律回 303 → `/`。若对每个首页
@@ -2490,6 +2525,21 @@ check(
   exitBadScheme.status === 400 && fs.existsSync(exitFile) === false,
   'HTTP ' + String(exitBadScheme.status) + ' 落盘=' + String(fs.existsSync(exitFile)),
 )
+// 明文 http 的非回环出口 → 拒绝（口令会随隧道请求明文出去）；回环放行（本机自测用）
+const exitPlainHttp = await exitHost.post('/relay', { url: 'http://exit.example.com' })
+check(
+  'relay 出口：明文 http 的非回环出口 → 400（访问口令不能明文出网卡），且不落盘',
+  exitPlainHttp.status === 400 && fs.existsSync(exitFile) === false,
+  'HTTP ' + String(exitPlainHttp.status) + ' ' + String(exitPlainHttp.payload.error),
+)
+const exitLoopbackHttp = await exitHost.post('/relay', { url: 'http://127.0.0.1:9' })
+check(
+  'relay 出口：回环的 http 放行（本机自测要能跑），但带上官方出口标记为否',
+  exitLoopbackHttp.status === 200 && exitLoopbackHttp.payload.relay.url === 'http://127.0.0.1:9' && exitLoopbackHttp.payload.relay.official === false,
+  'HTTP ' + String(exitLoopbackHttp.status) + ' ' + JSON.stringify(exitLoopbackHttp.payload.relay),
+)
+// 换回官方出口，别把状态留给后面的断言
+await exitHost.post('/relay', { url: 'official' })
 // 手打地址给台阶：没写协议按 https:// 算（面板上用户不会去敲协议头）
 const exitBareHost = await exitHost.post('/relay', { url: 'my-exit.example.com/' })
 check(
