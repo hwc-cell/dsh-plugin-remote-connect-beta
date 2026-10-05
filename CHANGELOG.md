@@ -2,6 +2,65 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-05
+
+**First stable release. The shared exit is the default way to publish, the plugin has been hardened
+end to end after a full audit, and the documented behaviour now matches what the code actually does.**
+
+### Security
+
+- **The origin marker header is actually written now — this was the one real defect in the gate.** Both
+  `README.md` and a source comment claimed the proxy would force-overwrite
+  `x-remote-connect-origin` so a remote visitor could never fake it. Nothing in the repository ever
+  wrote it (`git log -S` shows a single commit that never implemented the write side), and the host
+  API's `requireLocalControl()` checked **only** that header, with no Host/loopback fallback. So every
+  request that came in through a proxy lacked it, `canControl` was true for everyone, and a LAN visitor
+  (8787 carries no gate by design) or anyone holding a `?k=` link could POST the control routes —
+  rotate the access password, point the exit at their own server, stop the tunnel, add a tenant.
+  `rewriteHeaders()` now **deletes** the header and then sets it unconditionally from the proxy's own
+  `originLabel` (`handleUpgrade` goes through the same helper, so WebSocket is covered), and all three
+  entry points pass a label — `lib/index.js` (lan → `lan`, public → `public`) and `bin/dsh-remote.js`
+  (`isPublic ? 'public' : 'lan'`). The old test faked the header by hand to "simulate the proxy", so it
+  could never have caught this; the new assertions drive a **real** proxy into a **real** upstream (a
+  forged value is stripped) and separately check that both source entry points actually pass a label —
+  a mechanism-only test would have missed a missing wire-up.
+- **An exit address must be https** (loopback excepted). The access password rides on the tunnel
+  request, so a plaintext exit puts it on the wire. `isInsecureExitUrl()` makes such a config a config
+  error and the panel/API rejects it with a 400; `127.0.0.1` / `localhost` / `::1` stay allowed for
+  local testing. New message key `host.error.relayInsecureUrl` (added in both zh and en).
+- **`/relay/health` no longer hands operational numbers to anonymous callers.** It is reachable on any
+  subdomain Host without a credential, so it now answers `{ok:true}` unless the request carries the
+  admin token — only then does it return `store.stats()`.
+- **Rotating a credential no longer resurrects revoked users.** `rotate()` ended with
+  `saveState(全量内存)` but never re-read the state file first, and the exit is a long-lived process
+  whose file is edited by the CLI — so a user revoked from the CLI was written back into existence and
+  invites issued moments earlier were rolled back. Every other write path already re-read; this one was
+  missed. Regression assertion: revoke from a second store instance, then rotate — must 400 and leave
+  nothing on disk.
+- **The exit's per-tunnel send queue now has a bound** (`maxQueueFrames`, default 1024). A client that
+  connected but never sent `ready` could have frames piled into memory without limit by public requests;
+  the exit is one process shared by every user, so that was an OOM away from taking everyone down. Over
+  the cap the tunnel is closed and reconnects.
+
+### Fixed
+
+- **A public request's upstream timeout is now an idle timeout.** It was a flat 120 s measured from
+  request start and not reset while the body streamed, so any response that stayed streaming past two
+  minutes (LLM output, SSE) was cut off at second 120 — the opposite of the "streams must stay
+  streamed" goal. The timer now restarts when the response head arrives and on every chunk, so total
+  duration no longer matters as long as data keeps arriving; a genuinely wedged upstream still gets a
+  504 (or a closed stream once headers are out, since the status code cannot change mid-response).
+- **`/relay/rotate` now returns the new access password in `entry`.** `enroll` had always appended
+  `?k=…`; rotate did not, so a client reusing the returned entry hit an immediate 401.
+- **`relayTunnel` clears its backoff counter once the tunnel has been stable** (`stableMs`, default
+  120 s), matching `lib/core/tunnel.js`. Without it a single network blip pushed `attempts` to the
+  ceiling and every later reconnect waited the maximum delay.
+- **The docs now tell the truth about switching exits.** Returning to a previous exit reuses the stored
+  credential **only if no other exit has registered you since** — there is a single credential slot and
+  a successful registration elsewhere overwrites it (returning then needs a fresh invite). `CHANGELOG`,
+  `docs/relay.md` / `docs/relay.zh.md` and the `lib/index.js` comments previously promised unconditional
+  reuse.
+
 ## [0.1.0-beta.10] - 2026-10-04
 
 **A code can now be retired, which is what makes "replace my code" possible — and the TTL can be
@@ -48,8 +107,10 @@ actually ran in the plugin.**
   — the same rule as `public.accessKey` — so switching exits never edits the user's
   `cordis.patch.yml`. The invite is dropped from the file once a registration succeeds.
 - **Relay credentials are stamped with the exit that issued them** (`exitUrl`). Switching exits drops
-  the old exit's password, because that password means nothing on the new exit; switching back picks
-  the stored one up again. Credentials written before this field existed are stamped once at load, so
+  the old exit's password, because that password means nothing on the new exit. Switching back reuses
+  the stored credential **only until another exit has registered you** — there is a single credential
+  slot, so registering elsewhere overwrites it and returning needs a fresh invite. Credentials written
+  before this field existed are stamped once at load, so
   they cannot be carried across a switch by accident.
 - **Exit side: invite codes can expire, and there are two admin routes** for issuing them on behalf of
   an account. `newInvite({ttlDays})` records an `expiresAt` (default 14 days, hard ceiling 365, `0` =
