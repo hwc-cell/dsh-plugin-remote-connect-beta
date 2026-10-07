@@ -431,10 +431,32 @@ check(
 check('client: 动作后 busy 复位', clientExports.internals.store.busy === false)
 
 await clientExports.internals.refresh()
-clientExports.internals.setState({ open: true })
+clientExports.internals.setState({ open: true, settingsOpen: true })
 const panelHtml = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check('client: 面板渲染出局域网地址', panelHtml.includes('192.0.2.10:8787'))
 check('client: 面板文案全部走 t()', panelHtml.includes('«card.lan»') && panelHtml.includes('«action.check»'))
+clientExports.internals.setState({ settingsOpen: false })
+const panelCollapsedHtml = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+check(
+  'client: 默认折叠 —— 主视图只有「远程访问」，专业功能（设置）默认不渲染出来',
+  panelCollapsedHtml.includes('«card.remote»') &&
+    panelCollapsedHtml.includes('«card.settings»') &&
+    // 折叠态必须**能点开**：标题行是 <button aria-expanded="false">，不是一个死标题
+    panelCollapsedHtml.includes('dshRcHead isToggle') &&
+    panelCollapsedHtml.includes('aria-expanded="false"') &&
+    !panelCollapsedHtml.includes('«action.check»') &&
+    !panelCollapsedHtml.includes('«card.lan»'),
+)
+clientExports.internals.setState({ open: true, settingsOpen: true })
+const panelOpenHtml = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
+check(
+  'client: 展开设置后，连接方式 / 出口 / 自建 / 高级 / 诊断 五组都在',
+  ['settings.mode', 'settings.mode.relay', 'settings.mode.selfhost',
+   'settings.selfhost', 'settings.advanced', 'settings.diag', 'action.check', 'card.lan']
+    .every((key) => panelOpenHtml.includes('«' + key + '»')),
+  '缺=' + ['settings.mode', 'settings.exitGroup', 'settings.selfhost', 'settings.advanced', 'settings.diag']
+    .filter((key) => !panelOpenHtml.includes('«' + key + '»')).join(','),
+)
 check('client: 面板渲染出公网入口', panelHtml.includes('dsh.example.com'))
 check(
   'client: 面板显示隧道目标与端口',
@@ -469,6 +491,7 @@ clientExports.internals.setState({
     qr: null,
   },
 })
+clientExports.internals.setState({ settingsOpen: true })
 const tsPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check(
   'client: tailscale 模式下显示 funnel 地址（域名留空不算未配置）',
@@ -483,6 +506,7 @@ check(
   tsPanel.includes('«state.tunnel»') && tsPanel.includes('«phase.up»') && tsPanel.includes('Funnel is serving'),
 )
 clientExports.internals.setState({ checkResults: [{ id: 'dns', name: 'DNS', ok: true, detail: 'x.example.com -> 192.0.2.1' }] })
+clientExports.internals.setState({ settingsOpen: true })
 const checkPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check(
   'client: 检查结果按行渲染（标记/名称/详情分开，无「：」这类硬编码标点）',
@@ -508,6 +532,7 @@ check(
         qr: null, error: null,
       },
     })
+    clientExports.internals.setState({ settingsOpen: true })
     const html = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
     const missing = ['key.label', 'key.reveal', 'key.rotate', 'key.hint'].filter((key) => !html.includes('«' + key + '»'))
     // 反向断言：旧的四个键（当前/新/确认/修改）与「重置」不许复活
@@ -598,6 +623,7 @@ clientExports.internals.setState({
   tenantQrId: null,
   tenantDraft: '',
 })
+clientExports.internals.setState({ settingsOpen: true })
 const tenantsPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check(
   'client: 租户卡片渲染出每个租户、状态与专属入口',
@@ -626,6 +652,7 @@ check(
     clientExports.internals.setState({
       data: { ...before, tenants: { ...before.tenants, harness: { problem: '找不到 DSH Harness 入口：请配置 tenants.harness.bin' } } },
     })
+    clientExports.internals.setState({ settingsOpen: true })
     const html = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
     clientExports.internals.setState({ data: before })
     return html.includes('tenants.harness.bin')
@@ -662,6 +689,7 @@ check('client: 再点一次收起二维码（不会重复请求）', clientExpor
 
 // 回归：首次 /state 请求失败（store.data 仍为 null）时面板必须还能渲染
 clientExports.internals.setState({ data: null })
+clientExports.internals.setState({ settingsOpen: true })
 const emptyPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check('client: data 为 null 时面板不崩（回归）', emptyPanel.includes('«panel.title»'))
 
@@ -1919,7 +1947,8 @@ async function bootPluginWithKey(accessKey) {
   }
   process.env.DSH_HOME = dataDir
   const hostModule2 = await import(pathToFileURL(path.join(root, 'lib/index.js')).href + '?t=' + String(Date.now()))
-  hostModule2.apply(fakeCtx2, { public: { accessKey }, lan: { enabled: false } })
+  // tunnel 显式写 ssh：这一块测的是**自建那条路**的本机生成口令（默认值换成共享出口后不能再靠隐式默认）
+  hostModule2.apply(fakeCtx2, { public: { accessKey, tunnel: 'ssh' }, lan: { enabled: false } })
   const route = routes2.find((item) => item.path === API)
   const server2 = http.createServer((req, res) => route.handler(req, res))
   const port2 = await listen(server2)
@@ -2411,6 +2440,7 @@ clientExports.internals.setState({
     error: null,
   },
 })
+clientExports.internals.setState({ settingsOpen: true })
 const relayPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check(
   'relay: 面板渲染出口地址/名字/完整链接/信任提醒，且含入口链接',
@@ -2464,6 +2494,7 @@ clientExports.internals.setState({
     error: null,
   },
 })
+clientExports.internals.setState({ settingsOpen: true })
 const officialRelayPanel = renderToStaticMarkup(React.createElement(registrations[1].Component, { t: markerT }))
 check(
   'relay: 官方出口在面板上被显式标出（不静默替用户选出口）',
@@ -2566,6 +2597,119 @@ check(
   (fs.statSync(exitFile).mode & 0o777) === 0o600,
   'mode=' + (fs.statSync(exitFile).mode & 0o777).toString(8),
 )
+
+// ── 连接方式：共享出口 ⇄ 自建服务器（面板「设置」里那一对按钮）──────────
+const modeBad = await exitHost.post('/mode', { mode: 'tailscale' })
+check(
+  'mode: 连接方式只认 relay / ssh，别的取值 → 400',
+  modeBad.status === 400,
+  'HTTP ' + String(modeBad.status) + ' ' + String(modeBad.payload.error ?? ''),
+)
+const modeSsh = await exitHost.post('/mode', { mode: 'ssh' })
+const modeOnDisk = JSON.parse(fs.readFileSync(exitFile, 'utf8'))
+check(
+  'mode: 切到自建 → 落在覆盖文件里，并明确要求重启（不谎称立刻生效）',
+  modeSsh.status === 200 &&
+    modeSsh.payload.restartRequired === true &&
+    modeSsh.payload.mode === 'ssh' &&
+    modeOnDisk.tunnel === 'ssh',
+  'POST=' + JSON.stringify(modeSsh.payload) + ' 盘上=' + JSON.stringify(modeOnDisk),
+)
+const modeStateBefore = await exitHost.get('/state')
+check(
+  'mode: /state 报的是**当前生效**的连接方式 —— 还没重启就仍是 relay（配置只是种子）',
+  modeStateBefore.payload.config.tunnel === 'relay',
+  'tunnel=' + String(modeStateBefore.payload.config.tunnel),
+)
+// 换出口不许把用户刚选的连接方式擦掉
+const exitAfterMode = await exitHost.post('/relay', { url: 'https://third-exit.example.com' })
+const modeKeptOnDisk = JSON.parse(fs.readFileSync(exitFile, 'utf8'))
+check(
+  'mode: 改出口地址不会擦掉已选的连接方式（两份意图共用一份文件，写要带上另一半）',
+  exitAfterMode.status === 200 && modeKeptOnDisk.tunnel === 'ssh',
+  '盘上=' + JSON.stringify(modeKeptOnDisk),
+)
+const modeBackRelay = await exitHost.post('/mode', { mode: 'relay' })
+check(
+  'mode: 切回共享出口',
+  modeBackRelay.status === 200 && JSON.parse(fs.readFileSync(exitFile, 'utf8')).tunnel === 'relay',
+  JSON.stringify(modeBackRelay.payload),
+)
+
+// 覆盖只在**下次启动**生效：盘上写着 ssh、配置里是 relay → 生效的必须是 ssh
+const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mode-'))
+fs.mkdirSync(path.join(overrideDir, 'remote-connect'), { recursive: true })
+fs.writeFileSync(
+  path.join(overrideDir, 'remote-connect', 'relay-exit.json'),
+  JSON.stringify({ url: '', invite: '', tunnel: 'ssh' }),
+  { mode: 0o600 },
+)
+process.env.DSH_HOME = overrideDir
+const modMode = await import(pathToFileURL(path.join(root, 'lib/index.js')).href + '?mode=' + String(Date.now()))
+const routesMode = []
+modMode.apply(
+  {
+    logger: { info: () => {}, warn: () => {} },
+    get: () => undefined,
+    webServer: { port: idlePort, register: (route) => { routesMode.push(route); return () => {} } },
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+  },
+  { public: { enabled: false, tunnel: 'relay' } },
+)
+const routeMode = routesMode.find((item) => item.path === API)
+const serverMode = http.createServer((req, res) => routeMode.handler(req, res))
+const portMode = await listen(serverMode)
+const modeStateAfterRestart = JSON.parse(
+  (await rawRequest('http://127.0.0.1:' + String(portMode) + API + '/state')).body,
+)
+check(
+  'mode: 覆盖文件里的连接方式在下次启动生效（配置写 relay、盘上写 ssh → 生效 ssh）',
+  modeStateAfterRestart.config.tunnel === 'ssh',
+  'tunnel=' + String(modeStateAfterRestart.config.tunnel),
+)
+serverMode.close()
+
+// ── 连接方式的默认值：全新安装默认共享出口；有自建线索的老配置保持 ssh ──
+async function tunnelOf(rawConfig) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-def-'))
+  process.env.DSH_HOME = dir
+  const modDef = await import(
+    pathToFileURL(path.join(root, 'lib/index.js')).href + '?def=' + String(Date.now()) + String(Math.random())
+  )
+  const rsDef = []
+  modDef.apply(
+    {
+      logger: { info: () => {}, warn: () => {} },
+      get: () => undefined,
+      webServer: { port: idlePort, register: (route) => { rsDef.push(route); return () => {} } },
+      effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    },
+    rawConfig,
+  )
+  const routeDef = rsDef.find((item) => item.path === API)
+  const srvDef = http.createServer((req, res) => routeDef.handler(req, res))
+  const portDef = await listen(srvDef)
+  const stateDef = JSON.parse((await rawRequest('http://127.0.0.1:' + String(portDef) + API + '/state')).body)
+  srvDef.close()
+  return stateDef.config.tunnel
+}
+check(
+  '默认连接方式：什么都没配 → 共享出口（开箱即用是这条路线的卖点）',
+  (await tunnelOf({ public: { enabled: false } })) === 'relay',
+)
+check(
+  '默认连接方式：配了 public.domain 的老配置 → 仍是自建（不许静默把人切走，共享出口要邀请码才通）',
+  (await tunnelOf({ public: { enabled: false, domain: 'dsh.example.com' } })) === 'ssh',
+)
+check(
+  '默认连接方式：配了 public.ssh.host 的老配置 → 仍是自建',
+  (await tunnelOf({ public: { enabled: false, ssh: { host: '203.0.113.10', user: 'dsh' } } })) === 'ssh',
+  )
+check(
+  '默认连接方式：显式写了 public.tunnel 就听它的',
+  (await tunnelOf({ public: { enabled: false, tunnel: 'tailscale' } })) === 'tailscale',
+)
+
 // 换回官方出口：'official' 别名与留空同义，且不用再给邀请码
 const exitBackOfficial = await exitHost.post('/relay', { url: 'official' })
 check(

@@ -240,7 +240,8 @@ async function commandServe(flags) {
     })
     tunnel.start()
   } else if (typeof flags.tunnel === 'string') {
-    if (!['ssh', 'cloudflared', 'tailscale', 'none'].includes(flags.tunnel)) {
+    // relay 也要在白名单里 —— 它就是共享出口那条路（与 --relay 同一件事的两种写法）。
+    if (!['ssh', 'cloudflared', 'tailscale', 'relay', 'none'].includes(flags.tunnel)) {
       fail(t('cli.error.unknownTunnel', { mode: flags.tunnel }))
     }
     if (flags.tunnel === 'ssh' && (typeof flags['ssh-user'] !== 'string' || typeof flags['ssh-host'] !== 'string')) {

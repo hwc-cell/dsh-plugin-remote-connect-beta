@@ -374,7 +374,7 @@ lib/core/snippets.js           nginx / Caddy / authorized_keys generation
 lib/core/serversetup.js        Server installer generation (input validation against shell injection)
 lib/core/assets/               Installer script template (real bash; output must pass `bash -n`)
 relay/server.mjs               Shared-exit identity service: invites, issuance, rotation; fingerprints only
-test/verify.mjs                Contract / render / generator assertions (265 of them)
+test/verify.mjs                Contract / render / generator assertions (277 of them)
 test/relay.mjs                 Shared-exit service + tunnel transport assertions
 test/e2e-isolated.sh           End-to-end: boot an isolated DSH instance and mount this repo as a plugin
 test/no-private-values.sh      Gate: no author-private values in the repository

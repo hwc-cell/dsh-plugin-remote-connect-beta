@@ -366,7 +366,7 @@ lib/core/preflight.js    DNS / TLS / HTTPS+口令 / ssh 隧道 检查
 lib/core/snippets.js     nginx / Caddy / authorized_keys 配置生成
 lib/core/serversetup.js  服务器安装脚本生成（含输入校验防注入）
 lib/core/assets/         服务器安装脚本模板（真实 bash，产出必须过 bash -n）
-test/verify.mjs          冒烟测试（两半的真实契约，265 项断言）
+test/verify.mjs          冒烟测试（两半的真实契约，277 项断言）
 ```
 
 ---
@@ -374,7 +374,7 @@ test/verify.mjs          冒烟测试（两半的真实契约，265 项断言）
 ## 验证
 
 ```bash
-npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 265 项）
+npm test                          # 契约 / 渲染 / 生成物 / 本地化断言（当前 277 项）
 bash test/e2e-isolated.sh         # 端到端：拉一个隔离的 DSH 实例把本插件装进去
 bash test/no-private-values.sh    # 门禁：仓库里不得出现作者私有值
 ```
