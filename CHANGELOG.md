@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-10-07
+
+**The panel is split into a main view and a collapsed Settings card, and the connection route
+(shared exit vs your own server) can be switched from the panel.**
+
+### Changed
+
+- **Main view is the out-of-the-box path only**: a remote-access switch, the full entry link, the
+  access password and the QR code. Own server, LAN, tenants and diagnostics moved into a collapsed
+  **Settings** card so a first-time user is not asked to understand four tunnel engines.
+- **`public.tunnel` now defaults to `relay`** (the shared exit) — the README already claimed the
+  shared exit was the default route, the code did not. **A config with any self-host hint
+  (`public.domain` or `public.ssh.host`) still defaults to `ssh`**, so an existing self-hosted
+  install is not silently moved to a route that needs an invite code to connect.
+- **`--tunnel relay` is accepted by the CLI** (it was missing from the whitelist; only `--relay`
+  could select the shared exit).
+- **The self-host snippet button is reachable from Settings** (`tunnelMode === 'ssh'`), with an
+  explicit hint when it is not.
+
+### Added
+
+- **`POST /remote-connect/api/mode`** (`{mode: 'relay' | 'ssh'}`) — the panel's connection switch.
+  It records the choice in the same state file as the exit address (`relay-exit.json`, `tunnel`
+  field) and answers `{ok, mode, restartRequired: true}`. **New route; no existing route, request
+  shape or response shape changed.**
+- **The connection route takes effect on the next DSH start**, not immediately: the two routes have
+  different credential models (a shared exit issues and checks the password; self-hosting generates
+  it locally and stores it), so switching engines re-runs the plugin's credential initialisation.
+  The panel says so in as many words.
+- Two new panel i18n keys blocks (zh/en) plus `host.error.modeBad`; 265 → **273** assertions, the
+  new ones covering the collapsed default and the mode override round-trip.
+
 ## [1.0.0] - 2026-10-05
 
 **First stable release. The shared exit is the default way to publish, the plugin has been hardened
